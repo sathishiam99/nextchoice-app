@@ -104,15 +104,17 @@ const DEFAULT_CHOICE_PRESETS = [
   { id: "p5", text: "Reached out to a friend", sortOrder: 4, usageCount: 0 },
 ];
 
-const URGE_TYPES = [
-  "Porn / sexual content",
-  "YouTube / scrolling",
-  "Entertainment",
-  "Spending",
-  "Food",
-  "Gaming",
-  "Avoiding something",
-  "Custom",
+// Editable via ManageUrgeTypesScreen (add/edit/delete/reorder), same pattern
+// as choicePresets. "Custom" is not part of this list — it's always shown as
+// a fixed, non-editable final option in the Pause urge picker.
+const DEFAULT_URGE_TYPES = [
+  { id: "u1", text: "Porn / sexual content", sortOrder: 0 },
+  { id: "u2", text: "YouTube / scrolling", sortOrder: 1 },
+  { id: "u3", text: "Entertainment", sortOrder: 2 },
+  { id: "u4", text: "Spending", sortOrder: 3 },
+  { id: "u5", text: "Food", sortOrder: 4 },
+  { id: "u6", text: "Gaming", sortOrder: 5 },
+  { id: "u7", text: "Avoiding something", sortOrder: 6 },
 ];
 
 const URGE_RESULTS = ["The urge went away", "The urge got weaker", "I acted on the urge", "Not sure"];
@@ -138,6 +140,7 @@ const DEFAULT_DATA = {
   choices: [],
   actions: DEFAULT_ACTIONS,
   choicePresets: DEFAULT_CHOICE_PRESETS,
+  urgeTypes: DEFAULT_URGE_TYPES,
   settings: DEFAULT_SETTINGS,
 };
 
@@ -198,6 +201,8 @@ function useAppData() {
               Array.isArray(parsed.choicePresets) && parsed.choicePresets.length
                 ? parsed.choicePresets
                 : DEFAULT_CHOICE_PRESETS,
+            urgeTypes:
+              Array.isArray(parsed.urgeTypes) && parsed.urgeTypes.length ? parsed.urgeTypes : DEFAULT_URGE_TYPES,
             settings: parsed.settings && typeof parsed.settings === "object" ? { ...DEFAULT_SETTINGS, ...parsed.settings } : DEFAULT_SETTINGS,
           });
         } else {
@@ -320,7 +325,7 @@ function DeleteConfirmBar({ onCancel, onConfirm }) {
 
 // ---------------- PAUSE FLOW ----------------
 
-function PauseFlow({ actions, onCancel, onComplete }) {
+function PauseFlow({ actions, urgeTypes, onCancel, onComplete, onAddUrgeType, onEditUrgeType, onDeleteUrgeType, onMoveUrgeType }) {
   const [step, setStep] = useState("urge");
   const [urgeType, setUrgeType] = useState(null);
   const [customText, setCustomText] = useState("");
@@ -387,7 +392,25 @@ function PauseFlow({ actions, onCancel, onComplete }) {
   const mm = String(Math.floor(elapsed / 60)).padStart(1, "0");
   const ss = String(elapsed % 60).padStart(2, "0");
 
+  if (step === "manageUrgeTypes") {
+    return (
+      <ManagePresetsScreen
+        presets={urgeTypes}
+        title="Urge types"
+        subtitle="These show as tap options when you pause."
+        addLabel="Add urge type"
+        addPlaceholder="New urge type"
+        onBack={() => setStep("urge")}
+        onAdd={onAddUrgeType}
+        onEdit={onEditUrgeType}
+        onDelete={onDeleteUrgeType}
+        onMove={onMoveUrgeType}
+      />
+    );
+  }
+
   if (step === "urge") {
+    const sortedUrgeTypes = [...urgeTypes].sort((a, b) => a.sortOrder - b.sortOrder);
     return (
       <div className="flex h-full flex-col">
         <ScreenHeader onBack={onCancel} />
@@ -395,20 +418,32 @@ function PauseFlow({ actions, onCancel, onComplete }) {
           <h2 className="mb-1 text-xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 500 }}>
             What's going on?
           </h2>
-          <p className="mb-5 text-sm" style={{ color: COLORS.inkSoft }}>
-            Pick what you're feeling drawn to right now.
-          </p>
+          <div className="mb-5 flex items-center justify-between">
+            <p className="text-sm" style={{ color: COLORS.inkSoft }}>
+              Pick what you're feeling drawn to right now.
+            </p>
+            <button onClick={() => setStep("manageUrgeTypes")} className="flex-shrink-0 text-xs font-medium" style={{ color: COLORS.pause }}>
+              Edit
+            </button>
+          </div>
           <div className="grid grid-cols-2 gap-2.5 overflow-y-auto pb-4">
-            {URGE_TYPES.map((type) => (
+            {sortedUrgeTypes.map((type) => (
               <button
-                key={type}
-                onClick={() => pickUrge(type)}
+                key={type.id}
+                onClick={() => pickUrge(type.text)}
                 className="rounded-xl px-4 py-4 text-left text-sm font-medium transition-transform active:scale-[0.97]"
                 style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}`, color: COLORS.ink }}
               >
-                {type}
+                {type.text}
               </button>
             ))}
+            <button
+              onClick={() => pickUrge("Custom")}
+              className="rounded-xl px-4 py-4 text-left text-sm font-medium transition-transform active:scale-[0.97]"
+              style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}`, color: COLORS.ink }}
+            >
+              Custom
+            </button>
           </div>
           {urgeType === "Custom" && (
             <div className="mt-2 flex flex-col gap-2 pb-4">
@@ -605,7 +640,18 @@ function PresetRow({ preset, index, count, onEdit, onDelete, onMove }) {
   );
 }
 
-function ManagePresetsScreen({ presets, onBack, onAdd, onEdit, onDelete, onMove }) {
+function ManagePresetsScreen({
+  presets,
+  onBack,
+  onAdd,
+  onEdit,
+  onDelete,
+  onMove,
+  title = "Quick choices",
+  subtitle = "These show as tap-to-fill options when logging a choice.",
+  addLabel = "Add quick choice",
+  addPlaceholder = "New quick choice",
+}) {
   const [adding, setAdding] = useState(false);
   const [newText, setNewText] = useState("");
   const sorted = [...presets].sort((a, b) => a.sortOrder - b.sortOrder);
@@ -622,10 +668,10 @@ function ManagePresetsScreen({ presets, onBack, onAdd, onEdit, onDelete, onMove 
       <ScreenHeader onBack={onBack} />
       <div className="flex flex-1 flex-col overflow-y-auto px-5 pt-2 pb-4">
         <h2 className="mb-1 text-xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 500 }}>
-          Quick choices
+          {title}
         </h2>
         <p className="mb-5 text-sm" style={{ color: COLORS.inkSoft }}>
-          These show as tap-to-fill options when logging a choice.
+          {subtitle}
         </p>
 
         <div className="flex flex-col gap-2">
@@ -640,7 +686,7 @@ function ManagePresetsScreen({ presets, onBack, onAdd, onEdit, onDelete, onMove 
               autoFocus
               value={newText}
               onChange={(e) => setNewText(e.target.value)}
-              placeholder="New quick choice"
+              placeholder={addPlaceholder}
               className="flex-1 rounded-lg px-2 py-1 text-sm outline-none"
               style={{ backgroundColor: COLORS.bg, border: `1px solid ${COLORS.border}`, color: COLORS.ink }}
             />
@@ -665,7 +711,7 @@ function ManagePresetsScreen({ presets, onBack, onAdd, onEdit, onDelete, onMove 
             style={{ border: `1px dashed ${COLORS.border}`, color: COLORS.inkSoft }}
           >
             <Plus size={15} />
-            Add quick choice
+            {addLabel}
           </button>
         )}
       </div>
@@ -1517,9 +1563,8 @@ function sameDate(a, b) {
   return a.toDateString() === b.toDateString();
 }
 
-function WeekStrip() {
+function WeekStrip({ selectedDate, onSelectDate }) {
   const [weekOffset, setWeekOffset] = useState(0);
-  const [selectedDate, setSelectedDate] = useState(() => new Date());
   const today = new Date();
 
   const monday = getMonday(today);
@@ -1550,7 +1595,7 @@ function WeekStrip() {
         {days.map((d, i) => {
           const isSelected = sameDate(d, selectedDate);
           return (
-            <button key={i} onClick={() => setSelectedDate(d)} className="flex flex-col items-center gap-1 py-1">
+            <button key={i} onClick={() => onSelectDate(d)} className="flex flex-col items-center gap-1 py-1">
               <span className="text-[10px]" style={{ color: isSelected ? COLORS.reflect : COLORS.inkFaint }}>
                 {dayLetters[i]}
               </span>
@@ -1574,25 +1619,39 @@ function WeekStrip() {
 // ---------------- HOME / HISTORY / INSIGHTS ----------------
 
 function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry }) {
-  const todayCount = [...urges, ...choices].filter((e) => {
-    const d = new Date(e.startedAt || e.createdAt);
-    return d.toDateString() === new Date().toDateString();
-  }).length;
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const today = new Date();
+  const isToday = sameDate(selectedDate, today);
+  const isYesterday = (() => {
+    const y = new Date(today);
+    y.setDate(y.getDate() - 1);
+    return sameDate(selectedDate, y);
+  })();
 
-  const recent = [...urges, ...choices]
-    .sort((a, b) => new Date(b.startedAt || b.createdAt) - new Date(a.startedAt || a.createdAt))
-    .slice(0, 3);
+  const dayLabel = isToday
+    ? "Today"
+    : isYesterday
+    ? "Yesterday"
+    : selectedDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+
+  const dayEntries = [...urges, ...choices]
+    .filter((e) => sameDate(new Date(e.startedAt || e.createdAt), selectedDate))
+    .sort((a, b) => new Date(b.startedAt || b.createdAt) - new Date(a.startedAt || a.createdAt));
 
   return (
     <div className="flex h-full flex-col overflow-y-auto px-5 pb-4 pt-7">
-      <WeekStrip />
+      <WeekStrip selectedDate={selectedDate} onSelectDate={setSelectedDate} />
 
       <div className="mb-6">
         <p className="text-xs tracking-wide" style={{ color: COLORS.inkFaint }}>
-          Today
+          {dayLabel}
         </p>
         <h1 className="mt-1 text-2xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 500 }}>
-          {todayCount === 0 ? "Nothing logged yet today." : `${todayCount} logged today.`}
+          {dayEntries.length === 0
+            ? isToday
+              ? "Nothing logged yet today."
+              : "Nothing logged that day."
+            : `${dayEntries.length} logged ${isToday ? "today" : isYesterday ? "yesterday" : "that day"}.`}
         </h1>
       </div>
 
@@ -1632,9 +1691,9 @@ function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry }) {
 
       <div className="mt-8">
         <p className="mb-3 text-xs tracking-wide" style={{ color: COLORS.inkFaint }}>
-          Recent activity
+          {isToday ? "Recent activity" : `Activity · ${dayLabel}`}
         </p>
-        {recent.length === 0 ? (
+        {dayEntries.length === 0 ? (
           <div
             className="flex flex-col items-center justify-center gap-1 rounded-2xl px-5 py-8 text-center"
             style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}
@@ -1643,12 +1702,12 @@ function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry }) {
               Nothing here yet.
             </p>
             <p className="text-sm" style={{ color: COLORS.inkFaint }}>
-              Your urges and choices will show up here.
+              {isToday ? "Your urges and choices will show up here." : "No urges or choices logged on this day."}
             </p>
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            {recent.map((e) => (
+            {dayEntries.map((e) => (
               <EntryRow key={e.id} entry={e} onClick={() => onOpenEntry(e)} />
             ))}
           </div>
@@ -2020,7 +2079,7 @@ export default function NextChoiceApp() {
   const [systemPrefersDark, setSystemPrefersDark] = useState(false);
   const [data, persist, status] = useAppData();
 
-  const { urges, choices, actions, choicePresets } = data;
+  const { urges, choices, actions, choicePresets, urgeTypes } = data;
   const theme = data.settings?.theme || "system";
   const loading = status === "loading";
   const unavailable = status === "unavailable";
@@ -2079,6 +2138,7 @@ export default function NextChoiceApp() {
       actions: Array.isArray(parsed.actions) && parsed.actions.length ? parsed.actions : DEFAULT_ACTIONS,
       choicePresets:
         Array.isArray(parsed.choicePresets) && parsed.choicePresets.length ? parsed.choicePresets : DEFAULT_CHOICE_PRESETS,
+      urgeTypes: Array.isArray(parsed.urgeTypes) && parsed.urgeTypes.length ? parsed.urgeTypes : DEFAULT_URGE_TYPES,
       settings: parsed.settings && typeof parsed.settings === "object" ? { ...DEFAULT_SETTINGS, ...parsed.settings } : data.settings,
     };
     persist(sanitized);
@@ -2202,6 +2262,35 @@ export default function NextChoiceApp() {
     persist({ ...data, choicePresets: choicePresets.map((p) => (p.id === id ? { ...p, usageCount: (p.usageCount || 0) + 1 } : p)) });
   };
 
+  const addUrgeType = (text) => {
+    const maxSort = urgeTypes.reduce((m, u) => Math.max(m, u.sortOrder), -1);
+    const newType = { id: uid(), text, sortOrder: maxSort + 1 };
+    persist({ ...data, urgeTypes: [...urgeTypes, newType] });
+  };
+
+  const editUrgeType = (id, text) => {
+    persist({ ...data, urgeTypes: urgeTypes.map((u) => (u.id === id ? { ...u, text } : u)) });
+  };
+
+  const deleteUrgeType = (id) => {
+    persist({ ...data, urgeTypes: urgeTypes.filter((u) => u.id !== id) });
+  };
+
+  const moveUrgeType = (id, direction) => {
+    const sorted = [...urgeTypes].sort((a, b) => a.sortOrder - b.sortOrder);
+    const index = sorted.findIndex((u) => u.id === id);
+    const swapIndex = index + direction;
+    if (swapIndex < 0 || swapIndex >= sorted.length) return;
+    const a = sorted[index];
+    const b = sorted[swapIndex];
+    const updated = urgeTypes.map((u) => {
+      if (u.id === a.id) return { ...u, sortOrder: b.sortOrder };
+      if (u.id === b.id) return { ...u, sortOrder: a.sortOrder };
+      return u;
+    });
+    persist({ ...data, urgeTypes: updated });
+  };
+
   let screen;
   if (loading) {
     screen = <LoadingState />;
@@ -2222,7 +2311,18 @@ export default function NextChoiceApp() {
       );
     }
   } else if (overlay === "pause") {
-    screen = <PauseFlow actions={actions} onCancel={() => setOverlay(null)} onComplete={handlePauseComplete} />;
+    screen = (
+      <PauseFlow
+        actions={actions}
+        urgeTypes={urgeTypes}
+        onCancel={() => setOverlay(null)}
+        onComplete={handlePauseComplete}
+        onAddUrgeType={addUrgeType}
+        onEditUrgeType={editUrgeType}
+        onDeleteUrgeType={deleteUrgeType}
+        onMoveUrgeType={moveUrgeType}
+      />
+    );
   } else if (overlay === "reflect") {
     screen = (
       <ReflectFlow
