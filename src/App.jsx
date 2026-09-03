@@ -153,6 +153,60 @@ function outcomeDisplayLabel(outcome) {
   return found ? found.label : outcome;
 }
 
+function urgeResultShort(result) {
+  switch (result) {
+    case "The urge went away":
+      return "Went away";
+    case "The urge got weaker":
+      return "Weakened";
+    case "I acted on the urge":
+      return "Acted on it";
+    default:
+      return "Not sure";
+  }
+}
+
+const REDIRECTED_RESULTS = new Set(["The urge went away", "The urge got weaker"]);
+
+function computeUrgePatterns(urges, actions) {
+  const actionNameById = new Map(actions.map((a) => [a.id, a.name]));
+  const byType = new Map();
+
+  urges.forEach((u) => {
+    const key = u.urgeType || "Other";
+    if (!byType.has(key)) {
+      byType.set(key, { type: key, count: 0, redirected: 0, acted: 0, notSure: 0, actionStats: new Map() });
+    }
+    const entry = byType.get(key);
+    entry.count += 1;
+    const wasRedirected = REDIRECTED_RESULTS.has(u.result);
+    if (wasRedirected) entry.redirected += 1;
+    else if (u.result === "I acted on the urge") entry.acted += 1;
+    else entry.notSure += 1;
+
+    const actionName = (u.selectedActionId && actionNameById.get(u.selectedActionId)) || u.helpfulAction;
+    if (actionName) {
+      if (!entry.actionStats.has(actionName)) entry.actionStats.set(actionName, { used: 0, worked: 0 });
+      const stat = entry.actionStats.get(actionName);
+      stat.used += 1;
+      if (wasRedirected) stat.worked += 1;
+    }
+  });
+
+  return [...byType.values()]
+    .map((entry) => {
+      let bestAction = null;
+      for (const [name, stat] of entry.actionStats.entries()) {
+        const rate = stat.worked / stat.used;
+        if (!bestAction || rate > bestAction.rate || (rate === bestAction.rate && stat.used > bestAction.used)) {
+          bestAction = { name, used: stat.used, worked: stat.worked, rate };
+        }
+      }
+      return { ...entry, bestAction };
+    })
+    .sort((a, b) => b.count - a.count);
+}
+
 function decisionModeLabel(mode) {
   const found = DECISION_MODES.find((m) => m.id === mode);
   return found ? found.label : null;
@@ -1795,6 +1849,29 @@ function InsightCard({ children }) {
   );
 }
 
+function MiniScrollBox({ children, maxHeight = "8.5rem" }) {
+  return (
+    <div
+      className="mt-3 overflow-y-auto rounded-xl"
+      style={{ maxHeight, border: `1px solid ${COLORS.border}`, backgroundColor: COLORS.bg }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function MiniScrollRow({ left, right, isFirst }) {
+  return (
+    <div
+      className="flex items-center justify-between px-3 py-2 text-xs"
+      style={{ borderTop: isFirst ? "none" : `1px solid ${COLORS.border}` }}
+    >
+      <span style={{ color: COLORS.ink }}>{left}</span>
+      <span style={{ color: COLORS.inkFaint }}>{right}</span>
+    </div>
+  );
+}
+
 function OutcomeDoughnut({ choices }) {
   const total = choices.length;
 
@@ -2012,6 +2089,56 @@ function ActionStatsChart({ actions }) {
   );
 }
 
+function PatternTracker({ urges, actions }) {
+  if (urges.length === 0) {
+    return (
+      <InsightCard>
+        <p className="mb-1 text-sm font-medium" style={{ color: COLORS.ink }}>
+          Patterns by urge
+        </p>
+        <p className="text-sm" style={{ color: COLORS.inkFaint }}>
+          Pause on an urge to start seeing what tends to work for you.
+        </p>
+      </InsightCard>
+    );
+  }
+
+  const patterns = computeUrgePatterns(urges, actions);
+
+  return (
+    <InsightCard>
+      <p className="mb-1 text-sm font-medium" style={{ color: COLORS.ink }}>
+        Patterns by urge
+      </p>
+      <p className="mb-3 text-xs" style={{ color: COLORS.inkFaint }}>
+        What you tend to feel, how often, how it went, and what's worked instead.
+      </p>
+      <div className="flex flex-col gap-2.5">
+        {patterns.map((p) => (
+          <div key={p.type} className="rounded-xl px-3.5 py-3" style={{ border: `1px solid ${COLORS.border}` }}>
+            <div className="mb-1.5 flex items-center justify-between">
+              <p className="text-sm font-medium" style={{ color: COLORS.ink }}>
+                {p.type}
+              </p>
+              <p className="text-xs" style={{ color: COLORS.inkFaint }}>
+                {p.count}× logged
+              </p>
+            </div>
+            <p className="mb-1.5 text-xs" style={{ color: COLORS.inkSoft }}>
+              Redirected {p.redirected} · Acted on {p.acted} · Not sure {p.notSure}
+            </p>
+            <p className="text-xs" style={{ color: COLORS.inkFaint }}>
+              {p.bestAction
+                ? `Try instead: ${p.bestAction.name} — worked ${p.bestAction.worked} of ${p.bestAction.used} times`
+                : "Not enough data yet to suggest what to try instead."}
+            </p>
+          </div>
+        ))}
+      </div>
+    </InsightCard>
+  );
+}
+
 function InsightsScreen({ urges, choices, actions }) {
   const total = urges.length + choices.length;
   if (total === 0) {
@@ -2026,12 +2153,30 @@ function InsightsScreen({ urges, choices, actions }) {
   }
 
   const helpful = choices.filter((c) => c.outcome === "helpful").length;
-  const redirected = urges.filter((u) => u.result === "The urge went away" || u.result === "The urge got weaker").length;
+  const redirected = urges.filter((u) => REDIRECTED_RESULTS.has(u.result)).length;
 
   const bestAction = [...actions]
     .filter((a) => a.usageCount >= 2)
     .map((a) => ({ ...a, rate: a.successCount / a.usageCount }))
     .sort((a, b) => (b.rate === a.rate ? b.usageCount - a.usageCount : b.rate - a.rate))[0];
+
+  const urgeTypeCounts = (() => {
+    const map = new Map();
+    urges.forEach((u) => {
+      const key = u.urgeType || "Other";
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return [...map.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count);
+  })();
+
+  const redirectedEntries = urges
+    .filter((u) => REDIRECTED_RESULTS.has(u.result))
+    .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
+
+  const usedActionStats = [...actions]
+    .filter((a) => a.usageCount > 0)
+    .map((a) => ({ ...a, rate: Math.round((a.successCount / a.usageCount) * 100) }))
+    .sort((a, b) => (b.rate === a.rate ? b.usageCount - a.usageCount : b.rate - a.rate));
 
   return (
     <div className="flex h-full flex-col overflow-y-auto pt-7">
@@ -2043,6 +2188,13 @@ function InsightsScreen({ urges, choices, actions }) {
           <p className="text-sm" style={{ color: COLORS.inkSoft }}>
             You've logged <strong style={{ color: COLORS.ink }}>{total}</strong> {total === 1 ? "entry" : "entries"} so far.
           </p>
+          {urgeTypeCounts.length > 0 && (
+            <MiniScrollBox>
+              {urgeTypeCounts.map((u, i) => (
+                <MiniScrollRow key={u.type} left={u.type} right={`${u.count}×`} isFirst={i === 0} />
+              ))}
+            </MiniScrollBox>
+          )}
         </InsightCard>
 
         {urges.length > 0 && (
@@ -2050,6 +2202,18 @@ function InsightsScreen({ urges, choices, actions }) {
             <p className="text-sm" style={{ color: COLORS.inkSoft }}>
               You redirected or reduced <strong style={{ color: COLORS.ink }}>{redirected}</strong> of {urges.length} urges.
             </p>
+            {redirectedEntries.length > 0 && (
+              <MiniScrollBox>
+                {redirectedEntries.map((u, i) => (
+                  <MiniScrollRow
+                    key={u.id}
+                    left={u.urgeType}
+                    right={`${urgeResultShort(u.result)} · ${formatWhen(u.startedAt)}`}
+                    isFirst={i === 0}
+                  />
+                ))}
+              </MiniScrollBox>
+            )}
           </InsightCard>
         )}
 
@@ -2059,8 +2223,22 @@ function InsightsScreen({ urges, choices, actions }) {
               <strong style={{ color: COLORS.ink }}>{bestAction.name}</strong> has helped you redirect{" "}
               <strong style={{ color: COLORS.ink }}>{bestAction.successCount}</strong> of {bestAction.usageCount} times you've used it.
             </p>
+            {usedActionStats.length > 0 && (
+              <MiniScrollBox>
+                {usedActionStats.map((a, i) => (
+                  <MiniScrollRow
+                    key={a.id}
+                    left={a.name}
+                    right={`${a.successCount}/${a.usageCount} · ${a.rate}%`}
+                    isFirst={i === 0}
+                  />
+                ))}
+              </MiniScrollBox>
+            )}
           </InsightCard>
         )}
+
+        <PatternTracker urges={urges} actions={actions} />
 
         <OutcomeDoughnut choices={choices} />
         <ActionStatsChart actions={actions} />
