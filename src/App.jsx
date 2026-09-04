@@ -21,6 +21,23 @@ import {
   ListChecks,
   Download,
   Upload,
+  TrendingUp,
+  ShieldCheck,
+  Star,
+  PieChart as PieChartIcon,
+  Leaf,
+  Compass,
+  Atom,
+  Fingerprint,
+  Smartphone,
+  Gamepad2,
+  ShoppingBag,
+  UtensilsCrossed,
+  Footprints,
+  EyeOff,
+  Tv,
+  MoreHorizontal,
+  CalendarDays,
 } from "lucide-react";
 import {
   PieChart,
@@ -52,6 +69,11 @@ const LIGHT_PALETTE = {
   reflectSoft: "#E3E9E5",
   danger: "#B3492E",
   neutral: "#B7AFA0",
+  neutralSoft: "#EFEBE0",
+  sage: "#8FA48F",
+  sageSoft: "#E7EDE4",
+  gold: "#C69A4A",
+  goldSoft: "#F1E6CC",
 };
 
 const DARK_PALETTE = {
@@ -67,6 +89,11 @@ const DARK_PALETTE = {
   reflectSoft: "rgba(131,163,146,0.2)",
   danger: "#E0836A",
   neutral: "#75716A",
+  neutralSoft: "rgba(117,113,106,0.25)",
+  sage: "#8DAE93",
+  sageSoft: "rgba(141,174,147,0.2)",
+  gold: "#D9B36A",
+  goldSoft: "rgba(217,179,106,0.2)",
 };
 
 // Mutated in place (not reassigned) so every component reading COLORS.x at
@@ -104,18 +131,23 @@ const DEFAULT_CHOICE_PRESETS = [
   { id: "p5", text: "Reached out to a friend", sortOrder: 4, usageCount: 0 },
 ];
 
-// Editable via ManageUrgeTypesScreen (add/edit/delete/reorder), same pattern
-// as choicePresets. "Custom" is not part of this list — it's always shown as
-// a fixed, non-editable final option in the Pause urge picker.
-const DEFAULT_URGE_TYPES = [
-  { id: "u1", text: "Porn / sexual content", sortOrder: 0 },
-  { id: "u2", text: "YouTube / scrolling", sortOrder: 1 },
-  { id: "u3", text: "Entertainment", sortOrder: 2 },
-  { id: "u4", text: "Spending", sortOrder: 3 },
-  { id: "u5", text: "Food", sortOrder: 4 },
-  { id: "u6", text: "Gaming", sortOrder: 5 },
-  { id: "u7", text: "Avoiding something", sortOrder: 6 },
+const URGE_TYPES = [
+  "Porn / sexual content",
+  "YouTube / scrolling",
+  "Entertainment",
+  "Spending",
+  "Food",
+  "Gaming",
+  "Avoiding something",
+  "Custom",
 ];
+
+// Editable urge types (everything except the fixed "Custom" option) as persisted records.
+const DEFAULT_URGE_TYPES = URGE_TYPES.filter((t) => t !== "Custom").map((name, i) => ({
+  id: `u${i + 1}`,
+  name,
+  sortOrder: i,
+}));
 
 const URGE_RESULTS = ["The urge went away", "The urge got weaker", "I acted on the urge", "Not sure"];
 
@@ -148,104 +180,9 @@ function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-// Urge type records are keyed by `text`. Earlier versions of this app (and any
-// backup exported from them) stored this same list under a `name` key instead,
-// or as plain strings. Without this normalization, records saved under the old
-// shape have no `text` field and render as blank buttons on the Pause screen.
-function normalizeUrgeTypes(raw) {
-  if (!Array.isArray(raw) || raw.length === 0) return DEFAULT_URGE_TYPES;
-  const normalized = raw
-    .map((t, i) => {
-      if (typeof t === "string") {
-        return t.trim() ? { id: uid(), text: t.trim(), sortOrder: i } : null;
-      }
-      if (t && typeof t === "object") {
-        const text = typeof t.text === "string" && t.text.trim() ? t.text.trim() : typeof t.name === "string" && t.name.trim() ? t.name.trim() : "";
-        if (!text) return null;
-        return { id: t.id || uid(), text, sortOrder: typeof t.sortOrder === "number" ? t.sortOrder : i };
-      }
-      return null;
-    })
-    .filter(Boolean);
-  return normalized.length ? normalized : DEFAULT_URGE_TYPES;
-}
-
 function outcomeDisplayLabel(outcome) {
   const found = OUTCOMES.find((o) => o.id === outcome);
   return found ? found.label : outcome;
-}
-
-function urgeResultShort(result) {
-  switch (result) {
-    case "The urge went away":
-      return "Went away";
-    case "The urge got weaker":
-      return "Weakened";
-    case "I acted on the urge":
-      return "Acted on it";
-    default:
-      return "Not sure";
-  }
-}
-
-const REDIRECTED_RESULTS = new Set(["The urge went away", "The urge got weaker"]);
-
-// Success must be derived from actual urge outcome records, not the `successCount`
-// field on the action itself. That field was previously incremented for any result
-// other than "Not sure" — including "I acted on the urge", where the action did NOT
-// help — which silently inflated every action's reported success rate.
-function computeActionStats(urges, actions) {
-  const usage = new Map();
-  urges.forEach((u) => {
-    if (!u.selectedActionId) return;
-    if (!usage.has(u.selectedActionId)) usage.set(u.selectedActionId, { usageCount: 0, successCount: 0 });
-    const stat = usage.get(u.selectedActionId);
-    stat.usageCount += 1;
-    if (REDIRECTED_RESULTS.has(u.result)) stat.successCount += 1;
-  });
-  return actions.map((a) => {
-    const stat = usage.get(a.id) || { usageCount: 0, successCount: 0 };
-    return { ...a, usageCount: stat.usageCount, successCount: stat.successCount, rate: stat.usageCount ? stat.successCount / stat.usageCount : 0 };
-  });
-}
-
-function computeUrgePatterns(urges, actions) {
-  const actionNameById = new Map(actions.map((a) => [a.id, a.name]));
-  const byType = new Map();
-
-  urges.forEach((u) => {
-    const key = u.urgeType || "Other";
-    if (!byType.has(key)) {
-      byType.set(key, { type: key, count: 0, redirected: 0, acted: 0, notSure: 0, actionStats: new Map() });
-    }
-    const entry = byType.get(key);
-    entry.count += 1;
-    const wasRedirected = REDIRECTED_RESULTS.has(u.result);
-    if (wasRedirected) entry.redirected += 1;
-    else if (u.result === "I acted on the urge") entry.acted += 1;
-    else entry.notSure += 1;
-
-    const actionName = (u.selectedActionId && actionNameById.get(u.selectedActionId)) || u.helpfulAction;
-    if (actionName) {
-      if (!entry.actionStats.has(actionName)) entry.actionStats.set(actionName, { used: 0, worked: 0 });
-      const stat = entry.actionStats.get(actionName);
-      stat.used += 1;
-      if (wasRedirected) stat.worked += 1;
-    }
-  });
-
-  return [...byType.values()]
-    .map((entry) => {
-      let bestAction = null;
-      for (const [name, stat] of entry.actionStats.entries()) {
-        const rate = stat.worked / stat.used;
-        if (!bestAction || rate > bestAction.rate || (rate === bestAction.rate && stat.used > bestAction.used)) {
-          bestAction = { name, used: stat.used, worked: stat.worked, rate };
-        }
-      }
-      return { ...entry, bestAction };
-    })
-    .sort((a, b) => b.count - a.count);
 }
 
 function decisionModeLabel(mode) {
@@ -296,7 +233,8 @@ function useAppData() {
               Array.isArray(parsed.choicePresets) && parsed.choicePresets.length
                 ? parsed.choicePresets
                 : DEFAULT_CHOICE_PRESETS,
-            urgeTypes: normalizeUrgeTypes(parsed.urgeTypes),
+            urgeTypes:
+              Array.isArray(parsed.urgeTypes) && parsed.urgeTypes.length ? parsed.urgeTypes : DEFAULT_URGE_TYPES,
             settings: parsed.settings && typeof parsed.settings === "object" ? { ...DEFAULT_SETTINGS, ...parsed.settings } : DEFAULT_SETTINGS,
           });
         } else {
@@ -419,7 +357,7 @@ function DeleteConfirmBar({ onCancel, onConfirm }) {
 
 // ---------------- PAUSE FLOW ----------------
 
-function PauseFlow({ actions, urgeTypes, onCancel, onComplete, onAddUrgeType, onEditUrgeType, onDeleteUrgeType, onMoveUrgeType }) {
+function PauseFlow({ actions, urgeTypes, onCancel, onComplete, onEditUrgeTypes }) {
   const [step, setStep] = useState("urge");
   const [urgeType, setUrgeType] = useState(null);
   const [customText, setCustomText] = useState("");
@@ -437,6 +375,8 @@ function PauseFlow({ actions, urgeTypes, onCancel, onComplete, onAddUrgeType, on
     }
     return undefined;
   }, [step]);
+
+  const urgeTypeNames = [...urgeTypes].sort((a, b) => a.sortOrder - b.sortOrder).map((t) => t.name).concat("Custom");
 
   const activeSorted = [...actions].filter((a) => a.active);
   const sortedByPreference = [...activeSorted].sort((a, b) =>
@@ -486,25 +426,7 @@ function PauseFlow({ actions, urgeTypes, onCancel, onComplete, onAddUrgeType, on
   const mm = String(Math.floor(elapsed / 60)).padStart(1, "0");
   const ss = String(elapsed % 60).padStart(2, "0");
 
-  if (step === "manageUrgeTypes") {
-    return (
-      <ManagePresetsScreen
-        presets={urgeTypes}
-        title="Urge types"
-        subtitle="These show as tap options when you pause."
-        addLabel="Add urge type"
-        addPlaceholder="New urge type"
-        onBack={() => setStep("urge")}
-        onAdd={onAddUrgeType}
-        onEdit={onEditUrgeType}
-        onDelete={onDeleteUrgeType}
-        onMove={onMoveUrgeType}
-      />
-    );
-  }
-
   if (step === "urge") {
-    const sortedUrgeTypes = [...urgeTypes].sort((a, b) => a.sortOrder - b.sortOrder);
     return (
       <div className="flex h-full flex-col">
         <ScreenHeader onBack={onCancel} />
@@ -512,32 +434,29 @@ function PauseFlow({ actions, urgeTypes, onCancel, onComplete, onAddUrgeType, on
           <h2 className="mb-1 text-xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 500 }}>
             What's going on?
           </h2>
-          <div className="mb-5 flex items-center justify-between">
+          <div className="mb-5 flex items-start justify-between gap-3">
             <p className="text-sm" style={{ color: COLORS.inkSoft }}>
               Pick what you're feeling drawn to right now.
             </p>
-            <button onClick={() => setStep("manageUrgeTypes")} className="flex-shrink-0 text-xs font-medium" style={{ color: COLORS.pause }}>
+            <button
+              onClick={onEditUrgeTypes}
+              className="flex-shrink-0 pt-0.5 text-sm font-medium"
+              style={{ color: COLORS.pause }}
+            >
               Edit
             </button>
           </div>
           <div className="grid grid-cols-2 gap-2.5 overflow-y-auto pb-4">
-            {sortedUrgeTypes.map((type) => (
+            {urgeTypeNames.map((type) => (
               <button
-                key={type.id}
-                onClick={() => pickUrge(type.text)}
+                key={type}
+                onClick={() => pickUrge(type)}
                 className="rounded-xl px-4 py-4 text-left text-sm font-medium transition-transform active:scale-[0.97]"
                 style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}`, color: COLORS.ink }}
               >
-                {type.text}
+                {type}
               </button>
             ))}
-            <button
-              onClick={() => pickUrge("Custom")}
-              className="rounded-xl px-4 py-4 text-left text-sm font-medium transition-transform active:scale-[0.97]"
-              style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}`, color: COLORS.ink }}
-            >
-              Custom
-            </button>
           </div>
           {urgeType === "Custom" && (
             <div className="mt-2 flex flex-col gap-2 pb-4">
@@ -734,18 +653,7 @@ function PresetRow({ preset, index, count, onEdit, onDelete, onMove }) {
   );
 }
 
-function ManagePresetsScreen({
-  presets,
-  onBack,
-  onAdd,
-  onEdit,
-  onDelete,
-  onMove,
-  title = "Quick choices",
-  subtitle = "These show as tap-to-fill options when logging a choice.",
-  addLabel = "Add quick choice",
-  addPlaceholder = "New quick choice",
-}) {
+function ManagePresetsScreen({ presets, onBack, onAdd, onEdit, onDelete, onMove }) {
   const [adding, setAdding] = useState(false);
   const [newText, setNewText] = useState("");
   const sorted = [...presets].sort((a, b) => a.sortOrder - b.sortOrder);
@@ -762,10 +670,10 @@ function ManagePresetsScreen({
       <ScreenHeader onBack={onBack} />
       <div className="flex flex-1 flex-col overflow-y-auto px-5 pt-2 pb-4">
         <h2 className="mb-1 text-xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 500 }}>
-          {title}
+          Quick choices
         </h2>
         <p className="mb-5 text-sm" style={{ color: COLORS.inkSoft }}>
-          {subtitle}
+          These show as tap-to-fill options when logging a choice.
         </p>
 
         <div className="flex flex-col gap-2">
@@ -780,7 +688,7 @@ function ManagePresetsScreen({
               autoFocus
               value={newText}
               onChange={(e) => setNewText(e.target.value)}
-              placeholder={addPlaceholder}
+              placeholder="New quick choice"
               className="flex-1 rounded-lg px-2 py-1 text-sm outline-none"
               style={{ backgroundColor: COLORS.bg, border: `1px solid ${COLORS.border}`, color: COLORS.ink }}
             />
@@ -805,7 +713,7 @@ function ManagePresetsScreen({
             style={{ border: `1px dashed ${COLORS.border}`, color: COLORS.inkSoft }}
           >
             <Plus size={15} />
-            {addLabel}
+            Add quick choice
           </button>
         )}
       </div>
@@ -1476,6 +1384,147 @@ function ManageActionsScreen({ actions, onBack, onAdd, onEdit, onDelete, onToggl
   );
 }
 
+// ---------------- MANAGE URGE TYPES ----------------
+
+function UrgeTypeRow({ urgeType, index, count, onEdit, onDelete, onMove }) {
+  const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [name, setName] = useState(urgeType.name);
+
+  const save = () => {
+    if (name.trim()) onEdit(urgeType.id, name.trim());
+    setEditing(false);
+  };
+
+  if (confirmingDelete) {
+    return (
+      <div className="rounded-xl px-3 py-2" style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}>
+        <DeleteConfirmBar onCancel={() => setConfirmingDelete(false)} onConfirm={() => onDelete(urgeType.id)} />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex items-center gap-2 rounded-xl px-3 py-2.5"
+      style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}
+    >
+      <div className="flex flex-col">
+        <button onClick={() => onMove(urgeType.id, -1)} disabled={index === 0} style={{ opacity: index === 0 ? 0.25 : 1 }}>
+          <ChevronUp size={14} color={COLORS.inkSoft} />
+        </button>
+        <button onClick={() => onMove(urgeType.id, 1)} disabled={index === count - 1} style={{ opacity: index === count - 1 ? 0.25 : 1 }}>
+          <ChevronDown size={14} color={COLORS.inkSoft} />
+        </button>
+      </div>
+
+      <div className="flex-1">
+        {editing ? (
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full rounded-lg px-2 py-1 text-sm outline-none"
+            style={{ backgroundColor: COLORS.bg, border: `1px solid ${COLORS.border}`, color: COLORS.ink }}
+          />
+        ) : (
+          <p className="text-sm font-medium" style={{ color: COLORS.ink }}>
+            {urgeType.name}
+          </p>
+        )}
+      </div>
+
+      {editing ? (
+        <>
+          <button onClick={save} className="flex h-7 w-7 items-center justify-center rounded-full" style={{ backgroundColor: COLORS.reflect }}>
+            <Check size={13} color="#FFFFFF" />
+          </button>
+          <button onClick={() => setEditing(false)} className="flex h-7 w-7 items-center justify-center rounded-full" style={{ backgroundColor: COLORS.bg }}>
+            <X size={13} color={COLORS.inkSoft} />
+          </button>
+        </>
+      ) : (
+        <>
+          <button onClick={() => setEditing(true)} className="px-1">
+            <Pencil size={14} color={COLORS.inkSoft} />
+          </button>
+          <button onClick={() => setConfirmingDelete(true)} className="px-1">
+            <Trash2 size={14} color={COLORS.danger} />
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ManageUrgeTypesScreen({ urgeTypes, onBack, onAdd, onEdit, onDelete, onMove }) {
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const sorted = [...urgeTypes].sort((a, b) => a.sortOrder - b.sortOrder);
+
+  const submitAdd = () => {
+    if (!newName.trim()) return;
+    onAdd(newName.trim());
+    setNewName("");
+    setAdding(false);
+  };
+
+  return (
+    <div className="flex h-full flex-col">
+      <ScreenHeader onBack={onBack} />
+      <div className="flex flex-1 flex-col overflow-y-auto px-5 pt-2 pb-4">
+        <h2 className="mb-1 text-xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 500 }}>
+          Urge types
+        </h2>
+        <p className="mb-5 text-sm" style={{ color: COLORS.inkSoft }}>
+          These show as tap options when you pause.
+        </p>
+
+        <div className="flex flex-col gap-2">
+          {sorted.map((ut, i) => (
+            <UrgeTypeRow key={ut.id} urgeType={ut} index={i} count={sorted.length} onEdit={onEdit} onDelete={onDelete} onMove={onMove} />
+          ))}
+        </div>
+
+        {adding ? (
+          <div className="mt-3 flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}>
+            <input
+              autoFocus
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="New urge type"
+              className="flex-1 rounded-lg px-2 py-1 text-sm outline-none"
+              style={{ backgroundColor: COLORS.bg, border: `1px solid ${COLORS.border}`, color: COLORS.ink }}
+            />
+            <button onClick={submitAdd} className="flex h-7 w-7 items-center justify-center rounded-full" style={{ backgroundColor: COLORS.reflect }}>
+              <Check size={13} color="#FFFFFF" />
+            </button>
+            <button
+              onClick={() => {
+                setAdding(false);
+                setNewName("");
+              }}
+              className="flex h-7 w-7 items-center justify-center rounded-full"
+              style={{ backgroundColor: COLORS.bg }}
+            >
+              <X size={13} color={COLORS.inkSoft} />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            className="mt-3 flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-medium"
+            style={{ border: `1px dashed ${COLORS.border}`, color: COLORS.inkSoft }}
+          >
+            <Plus size={15} />
+            Add urge type
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------------- APP SETTINGS (appearance, backup, erase) ----------------
 
 function SegmentedControl({ value, onChange, options }) {
@@ -1657,8 +1706,9 @@ function sameDate(a, b) {
   return a.toDateString() === b.toDateString();
 }
 
-function WeekStrip({ selectedDate, onSelectDate }) {
+function WeekStrip() {
   const [weekOffset, setWeekOffset] = useState(0);
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
   const today = new Date();
 
   const monday = getMonday(today);
@@ -1689,7 +1739,7 @@ function WeekStrip({ selectedDate, onSelectDate }) {
         {days.map((d, i) => {
           const isSelected = sameDate(d, selectedDate);
           return (
-            <button key={i} onClick={() => onSelectDate(d)} className="flex flex-col items-center gap-1 py-1">
+            <button key={i} onClick={() => setSelectedDate(d)} className="flex flex-col items-center gap-1 py-1">
               <span className="text-[10px]" style={{ color: isSelected ? COLORS.reflect : COLORS.inkFaint }}>
                 {dayLetters[i]}
               </span>
@@ -1713,39 +1763,25 @@ function WeekStrip({ selectedDate, onSelectDate }) {
 // ---------------- HOME / HISTORY / INSIGHTS ----------------
 
 function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry }) {
-  const [selectedDate, setSelectedDate] = useState(() => new Date());
-  const today = new Date();
-  const isToday = sameDate(selectedDate, today);
-  const isYesterday = (() => {
-    const y = new Date(today);
-    y.setDate(y.getDate() - 1);
-    return sameDate(selectedDate, y);
-  })();
+  const todayCount = [...urges, ...choices].filter((e) => {
+    const d = new Date(e.startedAt || e.createdAt);
+    return d.toDateString() === new Date().toDateString();
+  }).length;
 
-  const dayLabel = isToday
-    ? "Today"
-    : isYesterday
-    ? "Yesterday"
-    : selectedDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-
-  const dayEntries = [...urges, ...choices]
-    .filter((e) => sameDate(new Date(e.startedAt || e.createdAt), selectedDate))
-    .sort((a, b) => new Date(b.startedAt || b.createdAt) - new Date(a.startedAt || a.createdAt));
+  const recent = [...urges, ...choices]
+    .sort((a, b) => new Date(b.startedAt || b.createdAt) - new Date(a.startedAt || a.createdAt))
+    .slice(0, 3);
 
   return (
     <div className="flex h-full flex-col overflow-y-auto px-5 pb-4 pt-7">
-      <WeekStrip selectedDate={selectedDate} onSelectDate={setSelectedDate} />
+      <WeekStrip />
 
       <div className="mb-6">
         <p className="text-xs tracking-wide" style={{ color: COLORS.inkFaint }}>
-          {dayLabel}
+          Today
         </p>
         <h1 className="mt-1 text-2xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 500 }}>
-          {dayEntries.length === 0
-            ? isToday
-              ? "Nothing logged yet today."
-              : "Nothing logged that day."
-            : `${dayEntries.length} logged ${isToday ? "today" : isYesterday ? "yesterday" : "that day"}.`}
+          {todayCount === 0 ? "Nothing logged yet today." : `${todayCount} logged today.`}
         </h1>
       </div>
 
@@ -1785,9 +1821,9 @@ function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry }) {
 
       <div className="mt-8">
         <p className="mb-3 text-xs tracking-wide" style={{ color: COLORS.inkFaint }}>
-          {isToday ? "Recent activity" : `Activity · ${dayLabel}`}
+          Recent activity
         </p>
-        {dayEntries.length === 0 ? (
+        {recent.length === 0 ? (
           <div
             className="flex flex-col items-center justify-center gap-1 rounded-2xl px-5 py-8 text-center"
             style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}
@@ -1796,12 +1832,12 @@ function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry }) {
               Nothing here yet.
             </p>
             <p className="text-sm" style={{ color: COLORS.inkFaint }}>
-              {isToday ? "Your urges and choices will show up here." : "No urges or choices logged on this day."}
+              Your urges and choices will show up here.
             </p>
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            {dayEntries.map((e) => (
+            {recent.map((e) => (
               <EntryRow key={e.id} entry={e} onClick={() => onOpenEntry(e)} />
             ))}
           </div>
@@ -1881,414 +1917,590 @@ function EmptyChartState({ label, height = 130 }) {
   );
 }
 
-function InsightCard({ children }) {
-  return (
-    <div className="rounded-2xl px-5 py-4" style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}>
-      {children}
-    </div>
-  );
-}
-
-function MiniScrollBox({ children, maxHeight = "8.5rem" }) {
+function InsightCard({ children, tight }) {
   return (
     <div
-      className="mt-3 overflow-y-auto rounded-xl"
-      style={{ maxHeight, border: `1px solid ${COLORS.border}`, backgroundColor: COLORS.bg }}
+      className={tight ? "rounded-[22px] px-5 py-4" : "rounded-[22px] px-5 py-5"}
+      style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}
     >
       {children}
     </div>
   );
 }
 
-function MiniScrollRow({ left, right, isFirst }) {
+function InsightCardHeader({ icon: Icon, iconColor, iconBg, title, subtitle, right }) {
   return (
-    <div
-      className="flex items-center justify-between px-3 py-2 text-xs"
-      style={{ borderTop: isFirst ? "none" : `1px solid ${COLORS.border}` }}
-    >
-      <span style={{ color: COLORS.ink }}>{left}</span>
-      <span style={{ color: COLORS.inkFaint }}>{right}</span>
+    <div className="mb-4 flex items-start justify-between gap-3">
+      <div className="flex items-start gap-3">
+        <div
+          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full"
+          style={{ backgroundColor: iconBg }}
+        >
+          <Icon size={16} color={iconColor} />
+        </div>
+        <div>
+          <p className="text-sm font-semibold" style={{ color: COLORS.ink }}>
+            {title}
+          </p>
+          {subtitle && (
+            <p className="text-xs" style={{ color: COLORS.inkFaint }}>
+              {subtitle}
+            </p>
+          )}
+        </div>
+      </div>
+      {right}
     </div>
   );
 }
 
-function OutcomeDoughnut({ choices }) {
-  const total = choices.length;
+function InsightCallout({ icon: Icon, children }) {
+  return (
+    <div className="mt-4 flex items-start gap-2.5 rounded-2xl px-4 py-3" style={{ backgroundColor: COLORS.reflectSoft }}>
+      {Icon && (
+        <div className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: COLORS.card }}>
+          <Icon size={12} color={COLORS.reflect} />
+        </div>
+      )}
+      <p className="text-xs leading-relaxed" style={{ color: COLORS.ink }}>
+        {children}
+      </p>
+    </div>
+  );
+}
+
+// ---------------- HEADER ----------------
+
+function InsightsHeader() {
+  return (
+    <div className="flex items-start justify-between px-5 pb-5">
+      <div>
+        <h1 className="text-2xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 600 }}>
+          Insights
+        </h1>
+        <p className="mt-0.5 text-xs" style={{ color: COLORS.inkFaint }}>
+          Understand your patterns. Celebrate progress.
+        </p>
+      </div>
+      <div
+        className="flex flex-shrink-0 items-center gap-1 rounded-full px-3 py-1.5"
+        style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}
+      >
+        <CalendarDays size={12} color={COLORS.inkSoft} />
+        <span className="text-[11px] font-medium" style={{ color: COLORS.inkSoft }}>
+          All time
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------- METRIC CARDS ----------------
+
+function MetricCard({ icon: Icon, iconColor, iconBg, value, label, context }) {
+  return (
+    <div className="rounded-[20px] px-4 py-4" style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}>
+      <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-full" style={{ backgroundColor: iconBg }}>
+        <Icon size={15} color={iconColor} />
+      </div>
+      <p className="text-2xl font-semibold leading-none" style={{ color: COLORS.ink }}>
+        {value}
+      </p>
+      <p className="mt-1.5 text-xs" style={{ color: COLORS.inkSoft }}>
+        {label}
+      </p>
+      {context && (
+        <p className="mt-1 text-[10px]" style={{ color: COLORS.inkFaint }}>
+          {context}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function MetricGrid({ urges, choices }) {
+  const totalEntries = urges.length + choices.length;
+  const redirected = urges.filter((u) => u.result === "The urge went away" || u.result === "The urge got weaker").length;
+  const redirectedPct = urges.length ? Math.round((redirected / urges.length) * 100) : null;
+
+  const dayKeys = new Set();
+  urges.forEach((u) => u.startedAt && dayKeys.add(new Date(u.startedAt).toDateString()));
+  choices.forEach((c) => c.createdAt && dayKeys.add(new Date(c.createdAt).toDateString()));
+
+  return (
+    <div className="grid grid-cols-2 gap-2.5">
+      <MetricCard icon={TrendingUp} iconColor={COLORS.reflect} iconBg={COLORS.reflectSoft} value={totalEntries} label="Total entries" />
+      <MetricCard
+        icon={ShieldCheck}
+        iconColor={COLORS.reflect}
+        iconBg={COLORS.reflectSoft}
+        value={redirectedPct == null ? "—" : `${redirectedPct}%`}
+        label="Urges redirected"
+      />
+      <MetricCard icon={Flame} iconColor={COLORS.pause} iconBg={COLORS.pauseSoft} value={dayKeys.size} label="Days active" />
+      <MetricCard icon={Star} iconColor={COLORS.gold} iconBg={COLORS.goldSoft} value={choices.length} label="Choices logged" />
+    </div>
+  );
+}
+
+// ---------------- PRIMARY: URGE OUTCOME DOUGHNUT ----------------
+
+function urgeResultStyle() {
+  return {
+    "The urge went away": COLORS.reflect,
+    "The urge got weaker": COLORS.sage,
+    "I acted on the urge": COLORS.pause,
+    "Not sure": COLORS.neutral,
+  };
+}
+
+function PrimaryOutcomeCard({ urges }) {
+  const total = urges.length;
 
   if (total === 0) {
     return (
       <InsightCard>
-        <p className="mb-3 text-xs" style={{ color: COLORS.inkFaint }}>
-          How your choices turned out
-        </p>
-        <EmptyChartState label="Reflect on a choice to see this." />
+        <InsightCardHeader icon={PieChartIcon} iconColor={COLORS.reflect} iconBg={COLORS.reflectSoft} title="What happens most often?" subtitle="Outcome of your urges" />
+        <EmptyChartState label="Use Pause during an urge to see this." height={160} />
       </InsightCard>
     );
   }
 
-  const counts = { helpful: 0, unhelpful: 0, too_early: 0 };
-  choices.forEach((c) => {
-    if (counts[c.outcome] != null) counts[c.outcome] += 1;
+  const counts = { "The urge went away": 0, "The urge got weaker": 0, "I acted on the urge": 0, "Not sure": 0 };
+  urges.forEach((u) => {
+    if (counts[u.result] != null) counts[u.result] += 1;
   });
-  const slices = [
-    { id: "helpful", label: "It helped", value: counts.helpful, color: COLORS.reflect },
-    { id: "unhelpful", label: "It didn't help", value: counts.unhelpful, color: COLORS.pause },
-    { id: "too_early", label: "Too soon to tell", value: counts.too_early, color: COLORS.neutral },
-  ].filter((s) => s.value > 0);
-  const helpfulPct = total ? Math.round((counts.helpful / total) * 100) : 0;
+  const slices = URGE_RESULTS.map((r) => ({
+    id: r,
+    label: r,
+    value: counts[r],
+    color: urgeResultStyle()[r],
+  })).filter((s) => s.value > 0);
+
+  const wentAway = counts["The urge went away"];
+  const weaker = counts["The urge got weaker"];
+  const acted = counts["I acted on the urge"];
+  const redirectedShare = (wentAway + weaker) / total;
+
+  let calloutIcon = Leaf;
+  let callout;
+  if (total < 3) {
+    callout = "Keep logging urges to see a clearer pattern here.";
+  } else if (redirectedShare >= 0.6) {
+    callout = "Great job! You're redirecting most of your urges. Keep using what works for you.";
+  } else if (acted / total >= 0.5) {
+    calloutIcon = Compass;
+    callout = "Urges are winning more often right now. Try reaching for your favorite action earlier next time.";
+  } else {
+    calloutIcon = Compass;
+    callout = "Your outcomes are mixed so far. A few more logged urges will make the pattern clearer.";
+  }
 
   return (
     <InsightCard>
-      <p className="mb-3 text-xs" style={{ color: COLORS.inkFaint }}>
-        How your choices turned out
-      </p>
-      <div className="flex items-center gap-4">
-        <div className="relative h-[110px] w-[110px] flex-shrink-0">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie data={slices} dataKey="value" innerRadius={32} outerRadius={50} startAngle={90} endAngle={-270} stroke="none">
-                {slices.map((s) => (
-                  <Cell key={s.id} fill={s.color} />
-                ))}
-              </Pie>
-            </PieChart>
-          </ResponsiveContainer>
+      <InsightCardHeader icon={PieChartIcon} iconColor={COLORS.reflect} iconBg={COLORS.reflectSoft} title="What happens most often?" subtitle="Outcome of your urges" />
+      <div className="flex items-center gap-5">
+        {/* Fixed pixel dimensions on both the wrapper and the chart itself (rather than
+            ResponsiveContainer's 100%/100%) avoid a 0-width first paint inside this
+            flex row, which was why the doughnut sometimes failed to render. */}
+        <div className="relative h-[150px] w-[150px] flex-shrink-0">
+          <PieChart width={150} height={150}>
+            <Pie data={slices} dataKey="value" innerRadius={48} outerRadius={72} startAngle={90} endAngle={-270} stroke="none">
+              {slices.map((s) => (
+                <Cell key={s.id} fill={s.color} />
+              ))}
+            </Pie>
+          </PieChart>
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-            <p className="text-lg font-semibold" style={{ color: COLORS.ink }}>
-              {helpfulPct}%
+            <p className="text-2xl font-semibold" style={{ color: COLORS.ink }}>
+              {total}
             </p>
             <p className="text-[10px]" style={{ color: COLORS.inkFaint }}>
-              helped
+              Total
             </p>
           </div>
         </div>
-        <div className="flex flex-1 flex-col gap-1.5">
+        <div className="flex flex-1 flex-col gap-2.5">
           {slices.map((s) => (
             <div key={s.id} className="flex items-center gap-2">
               <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: s.color }} />
-              <span className="flex-1 text-xs" style={{ color: COLORS.inkSoft }}>
+              <span className="flex-1 text-xs leading-tight" style={{ color: COLORS.inkSoft }}>
                 {s.label}
               </span>
-              <span className="text-xs font-medium" style={{ color: COLORS.ink }}>
-                {Math.round((s.value / total) * 100)}%
+              <span className="whitespace-nowrap text-xs font-medium" style={{ color: COLORS.ink }}>
+                {s.value} ({Math.round((s.value / total) * 100)}%)
               </span>
             </div>
           ))}
         </div>
       </div>
+      <InsightCallout icon={calloutIcon}>{callout}</InsightCallout>
     </InsightCard>
   );
 }
 
-function DecisionModeChart({ choices }) {
-  const groups = { autopilot: { total: 0, helpful: 0 }, thought_through: { total: 0, helpful: 0 }, gut: { total: 0, helpful: 0 } };
+// ---------------- WHAT HELPS THE MOST ----------------
+
+function ActionSuccessCard({ urges, actions }) {
+  const rows = actions
+    .map((a) => {
+      const used = urges.filter((u) => u.selectedActionId === a.id);
+      const usage = used.length;
+      const success = used.filter((u) => u.result === "The urge went away" || u.result === "The urge got weaker").length;
+      return { id: a.id, name: a.name, usage, success, rate: usage ? success / usage : 0 };
+    })
+    .filter((a) => a.usage > 0)
+    .sort((a, b) => (b.rate === a.rate ? b.usage - a.usage : b.rate - a.rate))
+    .slice(0, 6);
+
+  return (
+    <InsightCard>
+      <InsightCardHeader icon={Leaf} iconColor={COLORS.reflect} iconBg={COLORS.reflectSoft} title="What helps the most?" subtitle="Success rate by your Try Instead actions" />
+      {rows.length === 0 ? (
+        <EmptyChartState label="Use a Try Instead action during Pause to see this." height={110} />
+      ) : (
+        <div className="flex flex-col gap-3">
+          {rows.map((r) => {
+            const pct = Math.round(r.rate * 100);
+            return (
+              <div key={r.id} className="flex items-center gap-3">
+                <span className="w-[92px] flex-shrink-0 truncate text-xs" style={{ color: COLORS.ink }}>
+                  {r.name}
+                </span>
+                <div className="h-2 flex-1 overflow-hidden rounded-full" style={{ backgroundColor: COLORS.neutralSoft }}>
+                  <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: COLORS.reflect }} />
+                </div>
+                <span className="w-[38px] flex-shrink-0 text-right text-[11px]" style={{ color: COLORS.inkFaint }}>
+                  {r.success}/{r.usage}
+                </span>
+                <span className="w-[34px] flex-shrink-0 text-right text-xs font-semibold" style={{ color: COLORS.ink }}>
+                  {pct}%
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div className="mt-4 flex items-center gap-2">
+        <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: COLORS.reflect }} />
+        <p className="text-[11px]" style={{ color: COLORS.inkFaint }}>
+          Success rate = urge went away or got weaker
+        </p>
+      </div>
+    </InsightCard>
+  );
+}
+
+// ---------------- HOW DO YOU DECIDE ----------------
+
+function DecisionOutcomeCard({ choices }) {
+  const groups = {};
+  DECISION_MODES.forEach((m) => {
+    groups[m.id] = { helpful: 0, unhelpful: 0, too_early: 0, total: 0 };
+  });
   choices.forEach((c) => {
     if (!c.decisionMode || !groups[c.decisionMode]) return;
+    if (groups[c.decisionMode][c.outcome] != null) groups[c.decisionMode][c.outcome] += 1;
     groups[c.decisionMode].total += 1;
-    if (c.outcome === "helpful") groups[c.decisionMode].helpful += 1;
   });
-  const data = Object.entries(groups)
-    .filter(([, g]) => g.total > 0)
-    .map(([mode, g]) => ({
-      mode,
-      label: SHORT_DECISION_LABELS[mode],
-      pct: Math.round((g.helpful / g.total) * 100),
-    }));
+  const data = DECISION_MODES.filter((m) => groups[m.id].total > 0).map((m) => ({
+    mode: m.id,
+    label: SHORT_DECISION_LABELS[m.id],
+    helpful: groups[m.id].helpful,
+    unhelpful: groups[m.id].unhelpful,
+    too_early: groups[m.id].too_early,
+    rate: groups[m.id].total ? groups[m.id].helpful / groups[m.id].total : 0,
+    total: groups[m.id].total,
+  }));
 
-  if (data.length === 0) {
-    return (
-      <InsightCard>
-        <p className="mb-3 text-xs" style={{ color: COLORS.inkFaint }}>
-          How you choose vs. what helps
-        </p>
-        <EmptyChartState label="Reflect on a few choices to see this." />
-      </InsightCard>
-    );
+  let callout = "You're still building enough data to see a clear pattern.";
+  const confident = data.filter((d) => d.total >= 2).sort((a, b) => b.rate - a.rate);
+  if (confident.length >= 2 && confident[0].rate - confident[1].rate >= 0.15) {
+    callout = `${confident[0].label} leads to better outcomes for you.`;
+  } else if (confident.length === 1 && confident[0].total >= 3 && confident[0].rate >= 0.6) {
+    callout = `${confident[0].label} has been working well for you.`;
   }
 
   return (
     <InsightCard>
-      <p className="mb-3 text-xs" style={{ color: COLORS.inkFaint }}>
-        How you choose vs. what helps
-      </p>
-      <ResponsiveContainer width="100%" height={140}>
-        <BarChart data={data} margin={{ top: 16, right: 8, left: 8, bottom: 0 }}>
-          <XAxis
-            dataKey="label"
-            tick={{ fontSize: 10, fill: COLORS.inkFaint }}
-            axisLine={{ stroke: COLORS.border }}
-            tickLine={false}
-          />
-          <YAxis hide domain={[0, 100]} />
-          <Bar dataKey="pct" fill={COLORS.reflect} radius={[6, 6, 0, 0]} maxBarSize={44}>
-            <LabelList dataKey="pct" position="top" formatter={(v) => `${v}%`} style={{ fontSize: 11, fill: COLORS.ink, fontWeight: 600 }} />
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-      <p className="mt-1 text-xs" style={{ color: COLORS.inkFaint }}>
-        Share of choices marked helpful, by how you made them.
-      </p>
+      <InsightCardHeader icon={Brain} iconColor={COLORS.reflect} iconBg={COLORS.reflectSoft} title="How do you decide?" subtitle="Decision mode vs. outcome" />
+      {data.length === 0 ? (
+        <EmptyChartState label="Reflect on a few choices to see this." height={140} />
+      ) : (
+        <>
+          <div className="mb-2 flex flex-wrap items-center gap-3">
+            {[
+              { label: "Helped", color: COLORS.reflect },
+              { label: "Didn't help", color: COLORS.pause },
+              { label: "Too soon", color: COLORS.neutral },
+            ].map((l) => (
+              <div key={l.label} className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: l.color }} />
+                <span className="text-[10px]" style={{ color: COLORS.inkFaint }}>
+                  {l.label}
+                </span>
+              </div>
+            ))}
+          </div>
+          <ResponsiveContainer width="100%" height={150}>
+            <BarChart data={data} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+              <XAxis dataKey="label" tick={{ fontSize: 9, fill: COLORS.inkFaint }} axisLine={{ stroke: COLORS.border }} tickLine={false} />
+              <YAxis hide />
+              <Bar dataKey="helpful" stackId="a" fill={COLORS.reflect} radius={[0, 0, 0, 0]} maxBarSize={36} />
+              <Bar dataKey="unhelpful" stackId="a" fill={COLORS.pause} maxBarSize={36} />
+              <Bar dataKey="too_early" stackId="a" fill={COLORS.neutral} radius={[6, 6, 0, 0]} maxBarSize={36} />
+            </BarChart>
+          </ResponsiveContainer>
+        </>
+      )}
+      <InsightCallout icon={Compass}>{callout}</InsightCallout>
     </InsightCard>
   );
 }
 
-function ActivityTrend({ urges, choices }) {
-  const all = [...urges.map((u) => u.startedAt), ...choices.map((c) => c.createdAt)];
+// ---------------- ACTIVITY OVER TIME ----------------
+
+function ActivityTrendCard({ urges, choices }) {
+  const all = [...urges.map((u) => u.startedAt), ...choices.map((c) => c.createdAt)].filter(Boolean);
   const byDay = {};
   all.forEach((iso) => {
     const key = new Date(iso).toISOString().slice(0, 10);
     byDay[key] = (byDay[key] || 0) + 1;
   });
   const days = Object.keys(byDay).sort();
-  const recentDays = days.slice(-14);
-  const data = recentDays.map((key) => ({
-    date: new Date(key).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-    count: byDay[key],
-  }));
+  const recentDays = days.slice(-7);
+  const data = recentDays.map((key) => {
+    const d = new Date(key);
+    return { date: d.toLocaleDateString(undefined, { weekday: "short" }), full: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }), count: byDay[key] };
+  });
 
-  if (data.length === 0) {
-    return (
-      <InsightCard>
-        <p className="mb-3 text-xs" style={{ color: COLORS.inkFaint }}>
-          Your activity over time
-        </p>
-        <EmptyChartState label="Log something to see this." />
-      </InsightCard>
-    );
+  const byWeekday = {};
+  all.forEach((iso) => {
+    const wd = new Date(iso).toLocaleDateString(undefined, { weekday: "short" });
+    byWeekday[wd] = (byWeekday[wd] || 0) + 1;
+  });
+  const weekdayEntries = Object.entries(byWeekday).sort((a, b) => b[1] - a[1]);
+  let callout = "Keep logging to spot your rhythms.";
+  if (all.length >= 5 && weekdayEntries.length > 1 && weekdayEntries[0][1] > weekdayEntries[1][1]) {
+    callout = `You tend to be most active on ${weekdayEntries[0][0]}s.`;
+  } else if (all.length >= 5) {
+    callout = "Your activity is fairly even across the week.";
   }
 
   return (
     <InsightCard>
-      <p className="mb-3 text-xs" style={{ color: COLORS.inkFaint }}>
-        Your activity over time
-      </p>
-      <ResponsiveContainer width="100%" height={130}>
-        <LineChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-          <XAxis dataKey="date" tick={{ fontSize: 9, fill: COLORS.inkFaint }} axisLine={{ stroke: COLORS.border }} tickLine={false} interval="preserveStartEnd" />
-          <YAxis tick={{ fontSize: 9, fill: COLORS.inkFaint }} axisLine={false} tickLine={false} allowDecimals={false} width={20} />
-          <Tooltip
-            contentStyle={{ fontSize: 11, borderRadius: 8, border: `1px solid ${COLORS.border}` }}
-            labelStyle={{ color: COLORS.ink }}
-          />
-          <Line type="monotone" dataKey="count" stroke={COLORS.reflect} strokeWidth={2} dot={{ r: 3, fill: COLORS.reflect }} />
-        </LineChart>
-      </ResponsiveContainer>
+      <InsightCardHeader icon={Compass} iconColor={COLORS.reflect} iconBg={COLORS.reflectSoft} title="Activity over time" subtitle="Entries per day" />
+      {data.length === 0 ? (
+        <EmptyChartState label="Log something to see this." height={130} />
+      ) : (
+        <ResponsiveContainer width="100%" height={130}>
+          <LineChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+            <XAxis dataKey="date" tick={{ fontSize: 9, fill: COLORS.inkFaint }} axisLine={{ stroke: COLORS.border }} tickLine={false} interval="preserveStartEnd" />
+            <YAxis tick={{ fontSize: 9, fill: COLORS.inkFaint }} axisLine={false} tickLine={false} allowDecimals={false} width={20} />
+            <Tooltip
+              contentStyle={{ fontSize: 11, borderRadius: 8, border: `1px solid ${COLORS.border}`, backgroundColor: COLORS.card }}
+              labelStyle={{ color: COLORS.ink }}
+              formatter={(v) => [v, "Entries"]}
+            />
+            <Line type="monotone" dataKey="count" stroke={COLORS.reflect} strokeWidth={2} dot={{ r: 3, fill: COLORS.reflect }} />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+      <InsightCallout icon={TrendingUp}>{callout}</InsightCallout>
     </InsightCard>
   );
 }
 
-function ActionStatsChart({ urges, actions }) {
-  const used = computeActionStats(urges, actions)
-    .filter((a) => a.usageCount > 0)
-    .map((a) => ({
-      name: a.name,
-      usageCount: a.usageCount,
-      rate: Math.round(a.rate * 100),
-    }))
-    .sort((a, b) => b.usageCount - a.usageCount)
-    .slice(0, 5);
+// ---------------- URGE TYPE BREAKDOWN ----------------
 
-  if (used.length === 0) {
-    return (
-      <InsightCard>
-        <p className="mb-3 text-xs" style={{ color: COLORS.inkFaint }}>
-          Try Instead actions
-        </p>
-        <EmptyChartState label="Use an action during Pause to see this." />
-      </InsightCard>
-    );
-  }
+const URGE_TYPE_ICONS = {
+  "Porn / sexual content": EyeOff,
+  "YouTube / scrolling": Smartphone,
+  Entertainment: Tv,
+  Spending: ShoppingBag,
+  Food: UtensilsCrossed,
+  Gaming: Gamepad2,
+  "Avoiding something": Footprints,
+  Custom: MoreHorizontal,
+};
 
-  const chartHeight = Math.max(90, used.length * 34);
+function UrgeTypeBreakdownCard({ urges }) {
+  const total = urges.length;
+  const counts = {};
+  urges.forEach((u) => {
+    const key = URGE_TYPE_ICONS[u.urgeType] ? u.urgeType : "Custom";
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  const rows = Object.entries(counts).sort((a, b) => b[1] - a[1]);
 
   return (
     <InsightCard>
-      <p className="mb-3 text-xs" style={{ color: COLORS.inkFaint }}>
-        Try Instead actions
-      </p>
-      <ResponsiveContainer width="100%" height={chartHeight}>
-        <BarChart data={used} layout="vertical" margin={{ top: 4, right: 46, left: 0, bottom: 4 }}>
-          <XAxis type="number" hide />
-          <YAxis
-            type="category"
-            dataKey="name"
-            width={104}
-            tick={{ fontSize: 10, fill: COLORS.inkSoft }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <Bar dataKey="usageCount" fill={COLORS.pause} radius={[0, 6, 6, 0]} maxBarSize={16}>
-            <LabelList dataKey="rate" position="right" formatter={(v) => `${v}% helped`} style={{ fontSize: 10, fill: COLORS.inkFaint }} />
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-      <p className="mt-1 text-xs" style={{ color: COLORS.inkFaint }}>
-        Bar length shows how often you've used each action.
-      </p>
+      <InsightCardHeader icon={Atom} iconColor={COLORS.reflect} iconBg={COLORS.reflectSoft} title="Urge types breakdown" subtitle="Where your urges come from" />
+      {total === 0 ? (
+        <EmptyChartState label="Log a few urges to see this." height={100} />
+      ) : (
+        <div className="flex flex-wrap gap-x-5 gap-y-4">
+          {rows.map(([type, count]) => {
+            const Icon = URGE_TYPE_ICONS[type] || MoreHorizontal;
+            return (
+              <div key={type} className="flex w-[70px] flex-col items-center gap-1.5 text-center">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full" style={{ backgroundColor: COLORS.sageSoft }}>
+                  <Icon size={16} color={COLORS.reflect} />
+                </div>
+                <p className="text-[10px] leading-tight" style={{ color: COLORS.inkSoft }}>
+                  {type}
+                </p>
+                <p className="text-[11px] font-semibold" style={{ color: COLORS.ink }}>
+                  {count} ({Math.round((count / total) * 100)}%)
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </InsightCard>
   );
 }
 
-function PatternTracker({ urges, actions }) {
-  if (urges.length === 0) {
-    return (
-      <InsightCard>
-        <p className="mb-1 text-sm font-medium" style={{ color: COLORS.ink }}>
-          Patterns by urge
-        </p>
-        <p className="text-sm" style={{ color: COLORS.inkFaint }}>
-          Pause on an urge to start seeing what tends to work for you.
-        </p>
-      </InsightCard>
-    );
-  }
+// ---------------- PATTERN TRACKER ----------------
 
-  const patterns = computeUrgePatterns(urges, actions);
+function PatternTrackerRow({ type, urges, actions, expanded, onToggle }) {
+  const counts = { "The urge went away": 0, "The urge got weaker": 0, "I acted on the urge": 0, "Not sure": 0 };
+  urges.forEach((u) => {
+    if (counts[u.result] != null) counts[u.result] += 1;
+  });
+  const total = urges.length;
+
+  const byAction = {};
+  urges.forEach((u) => {
+    if (!u.selectedActionId) return;
+    if (!byAction[u.selectedActionId]) byAction[u.selectedActionId] = { usage: 0, success: 0 };
+    byAction[u.selectedActionId].usage += 1;
+    if (u.result === "The urge went away" || u.result === "The urge got weaker") byAction[u.selectedActionId].success += 1;
+  });
+  const best = Object.entries(byAction)
+    .filter(([, v]) => v.usage >= 2)
+    .map(([id, v]) => ({ id, ...v, rate: v.success / v.usage }))
+    .sort((a, b) => b.rate - a.rate)[0];
+  const bestAction = best ? actions.find((a) => a.id === best.id) : null;
 
   return (
-    <InsightCard>
-      <p className="mb-1 text-sm font-medium" style={{ color: COLORS.ink }}>
-        Patterns by urge
-      </p>
-      <p className="mb-3 text-xs" style={{ color: COLORS.inkFaint }}>
-        What you tend to feel, how often, how it went, and what's worked instead.
-      </p>
-      <div className="flex flex-col gap-2.5">
-        {patterns.map((p) => (
-          <div key={p.type} className="rounded-xl px-3.5 py-3" style={{ border: `1px solid ${COLORS.border}` }}>
-            <div className="mb-1.5 flex items-center justify-between">
-              <p className="text-sm font-medium" style={{ color: COLORS.ink }}>
-                {p.type}
-              </p>
-              <p className="text-xs" style={{ color: COLORS.inkFaint }}>
-                {p.count}× logged
-              </p>
-            </div>
-            <p className="mb-1.5 text-xs" style={{ color: COLORS.inkSoft }}>
-              Redirected {p.redirected} · Acted on {p.acted} · Not sure {p.notSure}
-            </p>
-            <p className="text-xs" style={{ color: COLORS.inkFaint }}>
-              {p.bestAction
-                ? `Try instead: ${p.bestAction.name} — worked ${p.bestAction.worked} of ${p.bestAction.used} times`
-                : "Not enough data yet to suggest what to try instead."}
-            </p>
+    <div className="rounded-2xl px-4 py-3" style={{ backgroundColor: COLORS.bg, border: `1px solid ${COLORS.border}` }}>
+      <button className="flex w-full items-center justify-between" onClick={onToggle}>
+        <div className="text-left">
+          <p className="text-xs font-semibold" style={{ color: COLORS.ink }}>
+            {type}
+          </p>
+          <p className="text-[11px]" style={{ color: COLORS.inkFaint }}>
+            {total} {total === 1 ? "time" : "times"}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex h-1.5 w-16 overflow-hidden rounded-full" style={{ backgroundColor: COLORS.neutralSoft }}>
+            {URGE_RESULTS.map((r) =>
+              counts[r] > 0 ? (
+                <div key={r} style={{ width: `${(counts[r] / total) * 100}%`, backgroundColor: urgeResultStyle()[r] }} />
+              ) : null
+            )}
           </div>
-        ))}
-      </div>
+          {expanded ? <ChevronUp size={14} color={COLORS.inkFaint} /> : <ChevronDown size={14} color={COLORS.inkFaint} />}
+        </div>
+      </button>
+      {expanded && (
+        <div className="mt-3 flex flex-col gap-1.5 border-t pt-3" style={{ borderColor: COLORS.border }}>
+          {URGE_RESULTS.filter((r) => counts[r] > 0).map((r) => (
+            <div key={r} className="flex items-center justify-between text-[11px]">
+              <span style={{ color: COLORS.inkSoft }}>{r}</span>
+              <span className="font-medium" style={{ color: COLORS.ink }}>
+                {counts[r]}
+              </span>
+            </div>
+          ))}
+          <div className="mt-1.5 flex items-center justify-between border-t pt-1.5 text-[11px]" style={{ borderColor: COLORS.border }}>
+            <span style={{ color: COLORS.inkFaint }}>Works best</span>
+            <span className="font-medium" style={{ color: COLORS.ink }}>
+              {bestAction ? `${bestAction.name} · ${best.success}/${best.usage}` : "Not enough data yet"}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PatternTrackerCard({ urges, actions }) {
+  const [expandedType, setExpandedType] = useState(null);
+  const [showAll, setShowAll] = useState(false);
+
+  const byType = {};
+  urges.forEach((u) => {
+    const key = URGE_TYPE_ICONS[u.urgeType] ? u.urgeType : u.urgeType || "Custom";
+    if (!byType[key]) byType[key] = [];
+    byType[key].push(u);
+  });
+  const groups = Object.entries(byType).sort((a, b) => b[1].length - a[1].length);
+  const visible = showAll ? groups : groups.slice(0, 4);
+
+  return (
+    <InsightCard>
+      <InsightCardHeader icon={Fingerprint} iconColor={COLORS.reflect} iconBg={COLORS.reflectSoft} title="Pattern tracker" subtitle="Understand yourself, urge type by urge type" />
+      {groups.length === 0 ? (
+        <EmptyChartState label="Log a few urges to see this." height={100} />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {visible.map(([type, list]) => (
+            <PatternTrackerRow
+              key={type}
+              type={type}
+              urges={list}
+              actions={actions}
+              expanded={expandedType === type}
+              onToggle={() => setExpandedType(expandedType === type ? null : type)}
+            />
+          ))}
+          {groups.length > 4 && !showAll && (
+            <button onClick={() => setShowAll(true)} className="mt-1 text-center text-xs font-medium" style={{ color: COLORS.reflect }}>
+              Show all urge types
+            </button>
+          )}
+        </div>
+      )}
     </InsightCard>
   );
 }
+
+// ---------------- INSIGHTS SCREEN ----------------
 
 function InsightsScreen({ urges, choices, actions }) {
   const total = urges.length + choices.length;
+
   if (total === 0) {
     return (
-      <div className="flex h-full flex-col pt-7">
-        <p className="px-5 pb-4 text-xs tracking-wide" style={{ color: COLORS.inkFaint }}>
-          Insights
-        </p>
+      <div className="flex h-full flex-col pt-6">
+        <InsightsHeader />
         <EmptyState label="Log a few urges or choices to see your patterns." />
       </div>
     );
   }
 
-  const helpful = choices.filter((c) => c.outcome === "helpful").length;
-  const redirected = urges.filter((u) => REDIRECTED_RESULTS.has(u.result)).length;
-
-  const actionStats = computeActionStats(urges, actions);
-
-  const bestAction = actionStats
-    .filter((a) => a.usageCount >= 2)
-    .sort((a, b) => (b.rate === a.rate ? b.usageCount - a.usageCount : b.rate - a.rate))[0];
-
-  const urgeTypeCounts = (() => {
-    const map = new Map();
-    urges.forEach((u) => {
-      const key = u.urgeType || "Other";
-      map.set(key, (map.get(key) || 0) + 1);
-    });
-    return [...map.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count);
-  })();
-
-  const redirectedEntries = urges
-    .filter((u) => REDIRECTED_RESULTS.has(u.result))
-    .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
-
-  const usedActionStats = actionStats
-    .filter((a) => a.usageCount > 0)
-    .map((a) => ({ ...a, rate: Math.round(a.rate * 100) }))
-    .sort((a, b) => (b.rate === a.rate ? b.usageCount - a.usageCount : b.rate - a.rate));
-
   return (
-    <div className="flex h-full flex-col overflow-y-auto pt-7">
-      <p className="px-5 pb-4 text-xs tracking-wide" style={{ color: COLORS.inkFaint }}>
-        Insights
-      </p>
+    <div className="flex h-full flex-col overflow-y-auto pt-6">
+      <InsightsHeader />
       <div className="flex flex-col gap-3 px-5 pb-6">
-        <InsightCard>
-          <p className="text-sm" style={{ color: COLORS.inkSoft }}>
-            You've logged <strong style={{ color: COLORS.ink }}>{total}</strong> {total === 1 ? "entry" : "entries"} so far.
-          </p>
-          {urgeTypeCounts.length > 0 && (
-            <MiniScrollBox>
-              {urgeTypeCounts.map((u, i) => (
-                <MiniScrollRow key={u.type} left={u.type} right={`${u.count}×`} isFirst={i === 0} />
-              ))}
-            </MiniScrollBox>
-          )}
-        </InsightCard>
-
-        {urges.length > 0 && (
-          <InsightCard>
-            <p className="text-sm" style={{ color: COLORS.inkSoft }}>
-              You redirected or reduced <strong style={{ color: COLORS.ink }}>{redirected}</strong> of {urges.length} urges.
-            </p>
-            {redirectedEntries.length > 0 && (
-              <MiniScrollBox>
-                {redirectedEntries.map((u, i) => (
-                  <MiniScrollRow
-                    key={u.id}
-                    left={u.urgeType}
-                    right={`${urgeResultShort(u.result)} · ${formatWhen(u.startedAt)}`}
-                    isFirst={i === 0}
-                  />
-                ))}
-              </MiniScrollBox>
-            )}
-          </InsightCard>
-        )}
-
-        {bestAction && (
-          <InsightCard>
-            <p className="text-sm" style={{ color: COLORS.inkSoft }}>
-              <strong style={{ color: COLORS.ink }}>{bestAction.name}</strong> has helped you redirect{" "}
-              <strong style={{ color: COLORS.ink }}>{bestAction.successCount}</strong> of {bestAction.usageCount} times you've used it.
-            </p>
-            {usedActionStats.length > 0 && (
-              <MiniScrollBox>
-                {usedActionStats.map((a, i) => (
-                  <MiniScrollRow
-                    key={a.id}
-                    left={a.name}
-                    right={`${a.successCount}/${a.usageCount} · ${a.rate}%`}
-                    isFirst={i === 0}
-                  />
-                ))}
-              </MiniScrollBox>
-            )}
-          </InsightCard>
-        )}
-
-        <PatternTracker urges={urges} actions={actions} />
-
-        <OutcomeDoughnut choices={choices} />
-        <ActionStatsChart urges={urges} actions={actions} />
-        <DecisionModeChart choices={choices} />
-        <ActivityTrend urges={urges} choices={choices} />
+        <MetricGrid urges={urges} choices={choices} />
+        <PrimaryOutcomeCard urges={urges} />
+        <ActionSuccessCard urges={urges} actions={actions} />
+        <div className="grid grid-cols-1 gap-3">
+          <DecisionOutcomeCard choices={choices} />
+          <ActivityTrendCard urges={urges} choices={choices} />
+        </div>
+        <UrgeTypeBreakdownCard urges={urges} />
+        <PatternTrackerCard urges={urges} actions={actions} />
       </div>
     </div>
   );
 }
+
 
 export default function NextChoiceApp() {
   const [tab, setTab] = useState("home");
@@ -2357,7 +2569,7 @@ export default function NextChoiceApp() {
       actions: Array.isArray(parsed.actions) && parsed.actions.length ? parsed.actions : DEFAULT_ACTIONS,
       choicePresets:
         Array.isArray(parsed.choicePresets) && parsed.choicePresets.length ? parsed.choicePresets : DEFAULT_CHOICE_PRESETS,
-      urgeTypes: normalizeUrgeTypes(parsed.urgeTypes),
+      urgeTypes: Array.isArray(parsed.urgeTypes) && parsed.urgeTypes.length ? parsed.urgeTypes : DEFAULT_URGE_TYPES,
       settings: parsed.settings && typeof parsed.settings === "object" ? { ...DEFAULT_SETTINGS, ...parsed.settings } : data.settings,
     };
     persist(sanitized);
@@ -2370,7 +2582,7 @@ export default function NextChoiceApp() {
   const handlePauseComplete = (urgeRecord) => {
     const updatedActions = actions.map((a) => {
       if (a.id !== urgeRecord.selectedActionId) return a;
-      const wasUseful = REDIRECTED_RESULTS.has(urgeRecord.result);
+      const wasUseful = urgeRecord.result !== "Not sure";
       return {
         ...a,
         usageCount: a.usageCount + 1,
@@ -2481,31 +2693,30 @@ export default function NextChoiceApp() {
     persist({ ...data, choicePresets: choicePresets.map((p) => (p.id === id ? { ...p, usageCount: (p.usageCount || 0) + 1 } : p)) });
   };
 
-  const addUrgeType = (text) => {
-    const maxSort = urgeTypes.reduce((m, u) => Math.max(m, u.sortOrder), -1);
-    const newType = { id: uid(), text, sortOrder: maxSort + 1 };
-    persist({ ...data, urgeTypes: [...urgeTypes, newType] });
+  const addUrgeType = (name) => {
+    const maxSort = urgeTypes.reduce((m, t) => Math.max(m, t.sortOrder), -1);
+    persist({ ...data, urgeTypes: [...urgeTypes, { id: uid(), name, sortOrder: maxSort + 1 }] });
   };
 
-  const editUrgeType = (id, text) => {
-    persist({ ...data, urgeTypes: urgeTypes.map((u) => (u.id === id ? { ...u, text } : u)) });
+  const editUrgeTypeName = (id, name) => {
+    persist({ ...data, urgeTypes: urgeTypes.map((t) => (t.id === id ? { ...t, name } : t)) });
   };
 
   const deleteUrgeType = (id) => {
-    persist({ ...data, urgeTypes: urgeTypes.filter((u) => u.id !== id) });
+    persist({ ...data, urgeTypes: urgeTypes.filter((t) => t.id !== id) });
   };
 
   const moveUrgeType = (id, direction) => {
     const sorted = [...urgeTypes].sort((a, b) => a.sortOrder - b.sortOrder);
-    const index = sorted.findIndex((u) => u.id === id);
+    const index = sorted.findIndex((t) => t.id === id);
     const swapIndex = index + direction;
     if (swapIndex < 0 || swapIndex >= sorted.length) return;
     const a = sorted[index];
     const b = sorted[swapIndex];
-    const updated = urgeTypes.map((u) => {
-      if (u.id === a.id) return { ...u, sortOrder: b.sortOrder };
-      if (u.id === b.id) return { ...u, sortOrder: a.sortOrder };
-      return u;
+    const updated = urgeTypes.map((t) => {
+      if (t.id === a.id) return { ...t, sortOrder: b.sortOrder };
+      if (t.id === b.id) return { ...t, sortOrder: a.sortOrder };
+      return t;
     });
     persist({ ...data, urgeTypes: updated });
   };
@@ -2536,10 +2747,18 @@ export default function NextChoiceApp() {
         urgeTypes={urgeTypes}
         onCancel={() => setOverlay(null)}
         onComplete={handlePauseComplete}
-        onAddUrgeType={addUrgeType}
-        onEditUrgeType={editUrgeType}
-        onDeleteUrgeType={deleteUrgeType}
-        onMoveUrgeType={moveUrgeType}
+        onEditUrgeTypes={() => setOverlay("manageUrgeTypes")}
+      />
+    );
+  } else if (overlay === "manageUrgeTypes") {
+    screen = (
+      <ManageUrgeTypesScreen
+        urgeTypes={urgeTypes}
+        onBack={() => setOverlay("pause")}
+        onAdd={addUrgeType}
+        onEdit={editUrgeTypeName}
+        onDelete={deleteUrgeType}
+        onMove={moveUrgeType}
       />
     );
   } else if (overlay === "reflect") {
