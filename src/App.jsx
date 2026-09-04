@@ -148,6 +148,28 @@ function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+// Urge type records are keyed by `text`. Earlier versions of this app (and any
+// backup exported from them) stored this same list under a `name` key instead,
+// or as plain strings. Without this normalization, records saved under the old
+// shape have no `text` field and render as blank buttons on the Pause screen.
+function normalizeUrgeTypes(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return DEFAULT_URGE_TYPES;
+  const normalized = raw
+    .map((t, i) => {
+      if (typeof t === "string") {
+        return t.trim() ? { id: uid(), text: t.trim(), sortOrder: i } : null;
+      }
+      if (t && typeof t === "object") {
+        const text = typeof t.text === "string" && t.text.trim() ? t.text.trim() : typeof t.name === "string" && t.name.trim() ? t.name.trim() : "";
+        if (!text) return null;
+        return { id: t.id || uid(), text, sortOrder: typeof t.sortOrder === "number" ? t.sortOrder : i };
+      }
+      return null;
+    })
+    .filter(Boolean);
+  return normalized.length ? normalized : DEFAULT_URGE_TYPES;
+}
+
 function outcomeDisplayLabel(outcome) {
   const found = OUTCOMES.find((o) => o.id === outcome);
   return found ? found.label : outcome;
@@ -167,6 +189,25 @@ function urgeResultShort(result) {
 }
 
 const REDIRECTED_RESULTS = new Set(["The urge went away", "The urge got weaker"]);
+
+// Success must be derived from actual urge outcome records, not the `successCount`
+// field on the action itself. That field was previously incremented for any result
+// other than "Not sure" — including "I acted on the urge", where the action did NOT
+// help — which silently inflated every action's reported success rate.
+function computeActionStats(urges, actions) {
+  const usage = new Map();
+  urges.forEach((u) => {
+    if (!u.selectedActionId) return;
+    if (!usage.has(u.selectedActionId)) usage.set(u.selectedActionId, { usageCount: 0, successCount: 0 });
+    const stat = usage.get(u.selectedActionId);
+    stat.usageCount += 1;
+    if (REDIRECTED_RESULTS.has(u.result)) stat.successCount += 1;
+  });
+  return actions.map((a) => {
+    const stat = usage.get(a.id) || { usageCount: 0, successCount: 0 };
+    return { ...a, usageCount: stat.usageCount, successCount: stat.successCount, rate: stat.usageCount ? stat.successCount / stat.usageCount : 0 };
+  });
+}
 
 function computeUrgePatterns(urges, actions) {
   const actionNameById = new Map(actions.map((a) => [a.id, a.name]));
@@ -255,8 +296,7 @@ function useAppData() {
               Array.isArray(parsed.choicePresets) && parsed.choicePresets.length
                 ? parsed.choicePresets
                 : DEFAULT_CHOICE_PRESETS,
-            urgeTypes:
-              Array.isArray(parsed.urgeTypes) && parsed.urgeTypes.length ? parsed.urgeTypes : DEFAULT_URGE_TYPES,
+            urgeTypes: normalizeUrgeTypes(parsed.urgeTypes),
             settings: parsed.settings && typeof parsed.settings === "object" ? { ...DEFAULT_SETTINGS, ...parsed.settings } : DEFAULT_SETTINGS,
           });
         } else {
@@ -2037,13 +2077,13 @@ function ActivityTrend({ urges, choices }) {
   );
 }
 
-function ActionStatsChart({ actions }) {
-  const used = [...actions]
+function ActionStatsChart({ urges, actions }) {
+  const used = computeActionStats(urges, actions)
     .filter((a) => a.usageCount > 0)
     .map((a) => ({
       name: a.name,
       usageCount: a.usageCount,
-      rate: a.usageCount ? Math.round((a.successCount / a.usageCount) * 100) : 0,
+      rate: Math.round(a.rate * 100),
     }))
     .sort((a, b) => b.usageCount - a.usageCount)
     .slice(0, 5);
@@ -2155,9 +2195,10 @@ function InsightsScreen({ urges, choices, actions }) {
   const helpful = choices.filter((c) => c.outcome === "helpful").length;
   const redirected = urges.filter((u) => REDIRECTED_RESULTS.has(u.result)).length;
 
-  const bestAction = [...actions]
+  const actionStats = computeActionStats(urges, actions);
+
+  const bestAction = actionStats
     .filter((a) => a.usageCount >= 2)
-    .map((a) => ({ ...a, rate: a.successCount / a.usageCount }))
     .sort((a, b) => (b.rate === a.rate ? b.usageCount - a.usageCount : b.rate - a.rate))[0];
 
   const urgeTypeCounts = (() => {
@@ -2173,9 +2214,9 @@ function InsightsScreen({ urges, choices, actions }) {
     .filter((u) => REDIRECTED_RESULTS.has(u.result))
     .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
 
-  const usedActionStats = [...actions]
+  const usedActionStats = actionStats
     .filter((a) => a.usageCount > 0)
-    .map((a) => ({ ...a, rate: Math.round((a.successCount / a.usageCount) * 100) }))
+    .map((a) => ({ ...a, rate: Math.round(a.rate * 100) }))
     .sort((a, b) => (b.rate === a.rate ? b.usageCount - a.usageCount : b.rate - a.rate));
 
   return (
@@ -2241,7 +2282,7 @@ function InsightsScreen({ urges, choices, actions }) {
         <PatternTracker urges={urges} actions={actions} />
 
         <OutcomeDoughnut choices={choices} />
-        <ActionStatsChart actions={actions} />
+        <ActionStatsChart urges={urges} actions={actions} />
         <DecisionModeChart choices={choices} />
         <ActivityTrend urges={urges} choices={choices} />
       </div>
@@ -2316,7 +2357,7 @@ export default function NextChoiceApp() {
       actions: Array.isArray(parsed.actions) && parsed.actions.length ? parsed.actions : DEFAULT_ACTIONS,
       choicePresets:
         Array.isArray(parsed.choicePresets) && parsed.choicePresets.length ? parsed.choicePresets : DEFAULT_CHOICE_PRESETS,
-      urgeTypes: Array.isArray(parsed.urgeTypes) && parsed.urgeTypes.length ? parsed.urgeTypes : DEFAULT_URGE_TYPES,
+      urgeTypes: normalizeUrgeTypes(parsed.urgeTypes),
       settings: parsed.settings && typeof parsed.settings === "object" ? { ...DEFAULT_SETTINGS, ...parsed.settings } : data.settings,
     };
     persist(sanitized);
@@ -2329,7 +2370,7 @@ export default function NextChoiceApp() {
   const handlePauseComplete = (urgeRecord) => {
     const updatedActions = actions.map((a) => {
       if (a.id !== urgeRecord.selectedActionId) return a;
-      const wasUseful = urgeRecord.result !== "Not sure";
+      const wasUseful = REDIRECTED_RESULTS.has(urgeRecord.result);
       return {
         ...a,
         usageCount: a.usageCount + 1,
