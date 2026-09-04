@@ -1706,9 +1706,86 @@ function sameDate(a, b) {
   return a.toDateString() === b.toDateString();
 }
 
-function WeekStrip() {
+// ---------------- INSIGHTS PERIOD FILTER (shared range calc, reused by InsightsHeader + InsightsScreen) ----------------
+
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function endOfDay(d) {
+  const x = new Date(d);
+  x.setHours(23, 59, 59, 999);
+  return x;
+}
+
+const INSIGHTS_PERIODS = [
+  { id: "all", label: "All time" },
+  { id: "today", label: "Today" },
+  { id: "yesterday", label: "Yesterday" },
+  { id: "thisWeek", label: "This week" },
+  { id: "lastWeek", label: "Last week" },
+  { id: "thisMonth", label: "This month" },
+  { id: "lastMonth", label: "Last month" },
+  { id: "custom", label: "Custom period" },
+];
+
+// Returns { start: Date, end: Date } inclusive, or null for "all time" / an incomplete custom range.
+function getInsightsRange(periodId, customStart, customEnd) {
+  const now = new Date();
+  switch (periodId) {
+    case "today":
+      return { start: startOfDay(now), end: endOfDay(now) };
+    case "yesterday": {
+      const y = new Date(now);
+      y.setDate(y.getDate() - 1);
+      return { start: startOfDay(y), end: endOfDay(y) };
+    }
+    case "thisWeek": {
+      const monday = getMonday(now);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      return { start: startOfDay(monday), end: endOfDay(sunday) };
+    }
+    case "lastWeek": {
+      const monday = getMonday(now);
+      monday.setDate(monday.getDate() - 7);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      return { start: startOfDay(monday), end: endOfDay(sunday) };
+    }
+    case "thisMonth": {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      return { start: startOfDay(start), end: endOfDay(end) };
+    }
+    case "lastMonth": {
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const end = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { start: startOfDay(start), end: endOfDay(end) };
+    }
+    case "custom": {
+      if (!customStart || !customEnd) return null;
+      return { start: startOfDay(new Date(customStart)), end: endOfDay(new Date(customEnd)) };
+    }
+    default:
+      return null;
+  }
+}
+
+function filterByRange(items, dateField, range) {
+  if (!range) return items;
+  return items.filter((item) => {
+    const raw = item[dateField];
+    if (!raw) return false;
+    const d = new Date(raw);
+    return d >= range.start && d <= range.end;
+  });
+}
+
+function WeekStrip({ selectedDate, onSelectDate }) {
   const [weekOffset, setWeekOffset] = useState(0);
-  const [selectedDate, setSelectedDate] = useState(() => new Date());
   const today = new Date();
 
   const monday = getMonday(today);
@@ -1739,7 +1816,7 @@ function WeekStrip() {
         {days.map((d, i) => {
           const isSelected = sameDate(d, selectedDate);
           return (
-            <button key={i} onClick={() => setSelectedDate(d)} className="flex flex-col items-center gap-1 py-1">
+            <button key={i} onClick={() => onSelectDate(d)} className="flex flex-col items-center gap-1 py-1">
               <span className="text-[10px]" style={{ color: isSelected ? COLORS.reflect : COLORS.inkFaint }}>
                 {dayLetters[i]}
               </span>
@@ -1763,18 +1840,25 @@ function WeekStrip() {
 // ---------------- HOME / HISTORY / INSIGHTS ----------------
 
 function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry }) {
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+
   const todayCount = [...urges, ...choices].filter((e) => {
     const d = new Date(e.startedAt || e.createdAt);
     return d.toDateString() === new Date().toDateString();
   }).length;
 
   const recent = [...urges, ...choices]
-    .sort((a, b) => new Date(b.startedAt || b.createdAt) - new Date(a.startedAt || a.createdAt))
-    .slice(0, 3);
+    .filter((e) => {
+      const d = new Date(e.startedAt || e.createdAt);
+      return d.toDateString() === selectedDate.toDateString();
+    })
+    .sort((a, b) => new Date(b.startedAt || b.createdAt) - new Date(a.startedAt || a.createdAt));
+
+  const isToday = selectedDate.toDateString() === new Date().toDateString();
 
   return (
     <div className="flex h-full flex-col overflow-y-auto px-5 pb-4 pt-7">
-      <WeekStrip />
+      <WeekStrip selectedDate={selectedDate} onSelectDate={setSelectedDate} />
 
       <div className="mb-6">
         <p className="text-xs tracking-wide" style={{ color: COLORS.inkFaint }}>
@@ -1821,7 +1905,9 @@ function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry }) {
 
       <div className="mt-8">
         <p className="mb-3 text-xs tracking-wide" style={{ color: COLORS.inkFaint }}>
-          Recent activity
+          {isToday
+            ? "Recent activity"
+            : `Activity · ${selectedDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
         </p>
         {recent.length === 0 ? (
           <div
@@ -1832,7 +1918,7 @@ function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry }) {
               Nothing here yet.
             </p>
             <p className="text-sm" style={{ color: COLORS.inkFaint }}>
-              Your urges and choices will show up here.
+              {isToday ? "Your urges and choices will show up here." : "Nothing logged on this date."}
             </p>
           </div>
         ) : (
@@ -1971,26 +2057,93 @@ function InsightCallout({ icon: Icon, children }) {
 
 // ---------------- HEADER ----------------
 
-function InsightsHeader() {
+function InsightsHeader({ period, onChangePeriod, customStart, customEnd, onChangeCustom }) {
+  const [open, setOpen] = useState(false);
+  const activeLabel = INSIGHTS_PERIODS.find((p) => p.id === period)?.label || "All time";
+
   return (
-    <div className="flex items-start justify-between px-5 pb-5">
-      <div>
-        <h1 className="text-2xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 600 }}>
-          Insights
-        </h1>
-        <p className="mt-0.5 text-xs" style={{ color: COLORS.inkFaint }}>
-          Understand your patterns. Celebrate progress.
-        </p>
+    <div className="relative px-5 pb-5">
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 600 }}>
+            Insights
+          </h1>
+          <p className="mt-0.5 text-xs" style={{ color: COLORS.inkFaint }}>
+            Understand your patterns. Celebrate progress.
+          </p>
+        </div>
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="flex flex-shrink-0 items-center gap-1 rounded-full px-3 py-1.5"
+          style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}
+        >
+          <CalendarDays size={12} color={COLORS.inkSoft} />
+          <span className="text-[11px] font-medium" style={{ color: COLORS.inkSoft }}>
+            {activeLabel}
+          </span>
+        </button>
       </div>
-      <div
-        className="flex flex-shrink-0 items-center gap-1 rounded-full px-3 py-1.5"
-        style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}
-      >
-        <CalendarDays size={12} color={COLORS.inkSoft} />
-        <span className="text-[11px] font-medium" style={{ color: COLORS.inkSoft }}>
-          All time
-        </span>
-      </div>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div
+            className="absolute right-5 top-[52px] z-20 w-56 rounded-2xl p-2"
+            style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}
+          >
+            {INSIGHTS_PERIODS.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => {
+                  onChangePeriod(p.id);
+                  if (p.id !== "custom") setOpen(false);
+                }}
+                className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-medium"
+                style={{
+                  backgroundColor: period === p.id ? COLORS.reflectSoft : "transparent",
+                  color: period === p.id ? COLORS.reflect : COLORS.ink,
+                }}
+              >
+                {p.label}
+              </button>
+            ))}
+            {period === "custom" && (
+              <div className="mt-1 flex flex-col gap-2 border-t px-1 pt-2" style={{ borderColor: COLORS.border }}>
+                <label className="text-[10px]" style={{ color: COLORS.inkFaint }}>
+                  Start
+                  <input
+                    type="date"
+                    value={customStart}
+                    max={customEnd || undefined}
+                    onChange={(e) => onChangeCustom(e.target.value, customEnd)}
+                    className="mt-1 w-full rounded-lg px-2 py-1.5 text-xs outline-none"
+                    style={{ backgroundColor: COLORS.bg, border: `1px solid ${COLORS.border}`, color: COLORS.ink }}
+                  />
+                </label>
+                <label className="text-[10px]" style={{ color: COLORS.inkFaint }}>
+                  End
+                  <input
+                    type="date"
+                    value={customEnd}
+                    min={customStart || undefined}
+                    onChange={(e) => onChangeCustom(customStart, e.target.value)}
+                    className="mt-1 w-full rounded-lg px-2 py-1.5 text-xs outline-none"
+                    style={{ backgroundColor: COLORS.bg, border: `1px solid ${COLORS.border}`, color: COLORS.ink }}
+                  />
+                </label>
+                <button
+                  onClick={() => setOpen(false)}
+                  disabled={!customStart || !customEnd}
+                  className="mt-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity"
+                  style={{ backgroundColor: COLORS.reflect, opacity: customStart && customEnd ? 1 : 0.5 }}
+                >
+                  Done
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -2472,30 +2625,50 @@ function PatternTrackerCard({ urges, actions }) {
 // ---------------- INSIGHTS SCREEN ----------------
 
 function InsightsScreen({ urges, choices, actions }) {
-  const total = urges.length + choices.length;
+  const [period, setPeriod] = useState("all");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+
+  const range = getInsightsRange(period, customStart, customEnd);
+  const filteredUrges = filterByRange(urges, "startedAt", range);
+  const filteredChoices = filterByRange(choices, "createdAt", range);
+  const total = filteredUrges.length + filteredChoices.length;
+
+  const headerProps = {
+    period,
+    onChangePeriod: setPeriod,
+    customStart,
+    customEnd,
+    onChangeCustom: (s, e) => {
+      setCustomStart(s);
+      setCustomEnd(e);
+    },
+  };
 
   if (total === 0) {
     return (
       <div className="flex h-full flex-col pt-6">
-        <InsightsHeader />
-        <EmptyState label="Log a few urges or choices to see your patterns." />
+        <InsightsHeader {...headerProps} />
+        <EmptyState
+          label={period === "all" ? "Log a few urges or choices to see your patterns." : "Nothing logged in this period."}
+        />
       </div>
     );
   }
 
   return (
     <div className="flex h-full flex-col overflow-y-auto pt-6">
-      <InsightsHeader />
+      <InsightsHeader {...headerProps} />
       <div className="flex flex-col gap-3 px-5 pb-6">
-        <MetricGrid urges={urges} choices={choices} />
-        <PrimaryOutcomeCard urges={urges} />
-        <ActionSuccessCard urges={urges} actions={actions} />
+        <MetricGrid urges={filteredUrges} choices={filteredChoices} />
+        <PrimaryOutcomeCard urges={filteredUrges} />
+        <ActionSuccessCard urges={filteredUrges} actions={actions} />
         <div className="grid grid-cols-1 gap-3">
-          <DecisionOutcomeCard choices={choices} />
-          <ActivityTrendCard urges={urges} choices={choices} />
+          <DecisionOutcomeCard choices={filteredChoices} />
+          <ActivityTrendCard urges={filteredUrges} choices={filteredChoices} />
         </div>
-        <UrgeTypeBreakdownCard urges={urges} />
-        <PatternTrackerCard urges={urges} actions={actions} />
+        <UrgeTypeBreakdownCard urges={filteredUrges} />
+        <PatternTrackerCard urges={filteredUrges} actions={actions} />
       </div>
     </div>
   );
