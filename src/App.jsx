@@ -38,6 +38,7 @@ import {
   Tv,
   MoreHorizontal,
   CalendarDays,
+  Search,
 } from "lucide-react";
 import {
   PieChart,
@@ -1839,13 +1840,8 @@ function WeekStrip({ selectedDate, onSelectDate }) {
 
 // ---------------- HOME / HISTORY / INSIGHTS ----------------
 
-function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry }) {
+function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry, onViewAllHistory }) {
   const [selectedDate, setSelectedDate] = useState(() => new Date());
-
-  const todayCount = [...urges, ...choices].filter((e) => {
-    const d = new Date(e.startedAt || e.createdAt);
-    return d.toDateString() === new Date().toDateString();
-  }).length;
 
   const recent = [...urges, ...choices]
     .filter((e) => {
@@ -1860,55 +1856,72 @@ function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry }) {
     <div className="flex h-full flex-col overflow-y-auto px-5 pb-4 pt-7">
       <WeekStrip selectedDate={selectedDate} onSelectDate={setSelectedDate} />
 
-      <div className="mb-6">
-        <p className="text-xs tracking-wide" style={{ color: COLORS.inkFaint }}>
-          Today
+      <div className="relative mb-6 overflow-hidden">
+        <Leaf
+          size={76}
+          color={COLORS.sage}
+          style={{ position: "absolute", right: -10, top: -8, opacity: 0.16, transform: "rotate(12deg)" }}
+        />
+        <p className="relative text-2xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 500 }}>
+          Good to see you!
         </p>
-        <h1 className="mt-1 text-2xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 500 }}>
-          {todayCount === 0 ? "Nothing logged yet today." : `${todayCount} logged today.`}
-        </h1>
+        <p className="relative mt-1 text-sm" style={{ color: COLORS.inkSoft, maxWidth: "26ch" }}>
+          You're building a better you, one choice at a time.
+        </p>
       </div>
 
       <div className="flex flex-col gap-3">
         <button
           onClick={onPause}
           className="flex items-center gap-4 rounded-2xl px-5 py-4 text-left transition-transform active:scale-[0.98]"
-          style={{ backgroundColor: COLORS.pause }}
+          style={{ backgroundColor: COLORS.reflect }}
         >
           <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.22)" }}>
             <Flame size={22} color="#FFFFFF" />
           </div>
-          <div>
+          <div className="flex-1">
             <p className="text-base font-semibold text-white">Pause</p>
             <p className="text-sm text-white" style={{ opacity: 0.85 }}>
               I'm having an urge
             </p>
           </div>
+          <ChevronRight size={18} color="rgba(255,255,255,0.75)" />
         </button>
 
         <button
           onClick={onReflect}
           className="flex items-center gap-4 rounded-2xl px-5 py-4 text-left transition-transform active:scale-[0.98]"
-          style={{ backgroundColor: COLORS.reflect }}
+          style={{ backgroundColor: COLORS.reflectSoft }}
         >
-          <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.22)" }}>
-            <Brain size={22} color="#FFFFFF" />
+          <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: COLORS.card }}>
+            <Pencil size={19} color={COLORS.reflect} />
           </div>
-          <div>
-            <p className="text-base font-semibold text-white">Reflect</p>
-            <p className="text-sm text-white" style={{ opacity: 0.85 }}>
+          <div className="flex-1">
+            <p className="text-base font-semibold" style={{ color: COLORS.ink }}>
+              Reflect
+            </p>
+            <p className="text-sm" style={{ color: COLORS.inkSoft }}>
               Log a choice
             </p>
           </div>
+          <ChevronRight size={18} color={COLORS.inkFaint} />
         </button>
       </div>
 
       <div className="mt-8">
-        <p className="mb-3 text-xs tracking-wide" style={{ color: COLORS.inkFaint }}>
-          {isToday
-            ? "Recent activity"
-            : `Activity · ${selectedDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
-        </p>
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-xs tracking-wide" style={{ color: COLORS.inkFaint }}>
+            {isToday
+              ? "Today's activity"
+              : `Activity · ${selectedDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
+          </p>
+          {isToday && recent.length > 0 && (
+            <button onClick={onViewAllHistory} className="flex items-center gap-0.5 text-xs font-medium" style={{ color: COLORS.reflect }}>
+              View all
+              <ChevronRight size={12} color={COLORS.reflect} />
+            </button>
+          )}
+        </div>
         {recent.length === 0 ? (
           <div
             className="flex flex-col items-center justify-center gap-1 rounded-2xl px-5 py-8 text-center"
@@ -1929,62 +1942,231 @@ function HomeScreen({ onPause, onReflect, urges, choices, onOpenEntry }) {
           </div>
         )}
       </div>
+
+      <div className="mt-6 flex items-center gap-3 rounded-2xl px-5 py-4" style={{ backgroundColor: COLORS.sageSoft }}>
+        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: COLORS.card }}>
+          <Leaf size={16} color={COLORS.reflect} />
+        </div>
+        <div>
+          <p className="text-sm font-medium" style={{ color: COLORS.ink }}>
+            Small steps make a big difference.
+          </p>
+          <p className="text-xs" style={{ color: COLORS.inkFaint }}>
+            Keep going!
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
 
-function EntryRow({ entry, onClick }) {
+// Urge result / choice outcome -> a simple positive/negative/neutral status pill.
+// Derived entirely from existing stored fields (result / outcome) — no new data.
+function entryStatus(entry) {
+  const isUrge = "urgeType" in entry;
+  if (isUrge) {
+    if (entry.result === "The urge went away" || entry.result === "The urge got weaker") {
+      return { label: entry.result, tone: "positive" };
+    }
+    if (entry.result === "I acted on the urge") {
+      return { label: entry.result, tone: "negative" };
+    }
+    return { label: entry.result || "Not sure", tone: "neutral" };
+  }
+  if (entry.outcome === "helpful") return { label: outcomeDisplayLabel(entry.outcome), tone: "positive" };
+  if (entry.outcome === "unhelpful") return { label: outcomeDisplayLabel(entry.outcome), tone: "negative" };
+  return { label: outcomeDisplayLabel(entry.outcome), tone: "neutral" };
+}
+
+function entryIcon(entry) {
+  if ("urgeType" in entry) return URGE_TYPE_ICONS[entry.urgeType] || Flame;
+  return Brain;
+}
+
+function StatusPill({ tone, label }) {
+  if (!label) return null;
+  const tones = {
+    positive: { bg: COLORS.reflectSoft, fg: COLORS.reflect, Icon: Check },
+    negative: { bg: COLORS.pauseSoft, fg: COLORS.pause, Icon: X },
+    neutral: { bg: COLORS.neutralSoft, fg: COLORS.inkSoft, Icon: null },
+  };
+  const t = tones[tone] || tones.neutral;
+  const Icon = t.Icon;
+  return (
+    <span
+      className="flex flex-shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-medium"
+      style={{ backgroundColor: t.bg, color: t.fg }}
+    >
+      {Icon && <Icon size={11} color={t.fg} />}
+      {label}
+    </span>
+  );
+}
+
+function EntryRow({ entry, onClick, chevron }) {
   const isUrge = "urgeType" in entry;
   const label = isUrge ? entry.urgeType : entry.text;
   const when = new Date(entry.startedAt || entry.createdAt);
-  const outcomeLabel = isUrge ? entry.result : outcomeDisplayLabel(entry.outcome);
+  const status = entryStatus(entry);
+  const Icon = entryIcon(entry);
+  const tint = isUrge ? COLORS.pause : COLORS.reflect;
   return (
     <button
       onClick={onClick}
-      className="flex items-center justify-between rounded-xl px-4 py-3 text-left transition-transform active:scale-[0.98]"
+      className="flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-left transition-transform active:scale-[0.98]"
       style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}
     >
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         <div
-          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full"
-          style={{ backgroundColor: (isUrge ? COLORS.pause : COLORS.reflect) + "1A" }}
+          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full"
+          style={{ backgroundColor: tint + "1A" }}
         >
-          {isUrge ? <Flame size={14} color={COLORS.pause} /> : <Brain size={14} color={COLORS.reflect} />}
+          <Icon size={15} color={tint} />
         </div>
-        <div>
-          <p className="text-sm font-medium" style={{ color: COLORS.ink }}>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium" style={{ color: COLORS.ink }}>
             {label}
           </p>
           <p className="text-xs" style={{ color: COLORS.inkFaint }}>
-            {when.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ·{" "}
             {when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
           </p>
         </div>
       </div>
-      {outcomeLabel && (
-        <span className="text-xs" style={{ color: COLORS.inkFaint }}>
-          {outcomeLabel}
-        </span>
-      )}
+      <div className="flex flex-shrink-0 items-center gap-2">
+        <StatusPill tone={status.tone} label={status.label} />
+        {chevron && <ChevronRight size={14} color={COLORS.inkFaint} />}
+      </div>
     </button>
   );
 }
 
+const HISTORY_FILTERS = [
+  { id: "all", label: "All" },
+  { id: "redirected", label: "Redirected" },
+  { id: "acted", label: "Acted" },
+  { id: "notes", label: "Notes" },
+];
+
+// Filters map onto existing stored fields only — no invented data.
+// "Redirected" = a positive outcome (urge resisted, or a choice that helped).
+// "Acted" = the user acted on the urge. "Notes" = entries with a note attached.
+function matchesHistoryFilter(entry, filterId) {
+  if (filterId === "all") return true;
+  const isUrge = "urgeType" in entry;
+  if (filterId === "redirected") {
+    return isUrge ? entry.result === "The urge went away" || entry.result === "The urge got weaker" : entry.outcome === "helpful";
+  }
+  if (filterId === "acted") {
+    return isUrge && entry.result === "I acted on the urge";
+  }
+  if (filterId === "notes") {
+    return Boolean(entry.notes && entry.notes.trim());
+  }
+  return true;
+}
+
+function groupEntriesByDate(entries) {
+  const groups = {};
+  entries.forEach((e) => {
+    const d = new Date(e.startedAt || e.createdAt);
+    const key = d.toDateString();
+    if (!groups[key]) groups[key] = { date: d, items: [] };
+    groups[key].items.push(e);
+  });
+  return Object.values(groups).sort((a, b) => b.date - a.date);
+}
+
 function HistoryScreen({ urges, choices, onOpenEntry }) {
+  const [filter, setFilter] = useState("all");
+  const [showSearch, setShowSearch] = useState(false);
+  const [query, setQuery] = useState("");
+
   const all = [...urges, ...choices].sort(
     (a, b) => new Date(b.startedAt || b.createdAt) - new Date(a.startedAt || a.createdAt)
   );
+
+  const filtered = all.filter((e) => matchesHistoryFilter(e, filter)).filter((e) => {
+    if (!query.trim()) return true;
+    const label = ("urgeType" in e ? e.urgeType : e.text) || "";
+    return label.toLowerCase().includes(query.trim().toLowerCase());
+  });
+
+  const groups = groupEntriesByDate(filtered);
+
   return (
-    <div className="flex h-full flex-col pt-7">
-      <p className="px-5 pb-4 text-xs tracking-wide" style={{ color: COLORS.inkFaint }}>
-        History
-      </p>
-      {all.length === 0 ? (
-        <EmptyState label="No urges or choices logged yet." />
+    <div className="flex h-full flex-col pt-6">
+      <div className="px-5 pb-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl" style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 600 }}>
+              History
+            </h1>
+            <p className="mt-0.5 text-xs" style={{ color: COLORS.inkFaint }}>
+              Your journey, one choice at a time.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowSearch((s) => !s)}
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full"
+            style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}` }}
+            aria-label="Search history"
+          >
+            <Search size={15} color={COLORS.inkSoft} />
+          </button>
+        </div>
+
+        {showSearch && (
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search entries"
+            className="mt-3 w-full rounded-xl px-4 py-2.5 text-sm outline-none"
+            style={{ backgroundColor: COLORS.card, border: `1px solid ${COLORS.border}`, color: COLORS.ink }}
+          />
+        )}
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          {HISTORY_FILTERS.map((f) => {
+            const active = filter === f.id;
+            return (
+              <button
+                key={f.id}
+                onClick={() => setFilter(f.id)}
+                className="rounded-full px-3.5 py-1.5 text-xs font-medium transition-transform active:scale-95"
+                style={{
+                  backgroundColor: active ? COLORS.reflect : COLORS.card,
+                  border: `1px solid ${active ? COLORS.reflect : COLORS.border}`,
+                  color: active ? "#FFFFFF" : COLORS.inkSoft,
+                }}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {groups.length === 0 ? (
+        <EmptyState label={all.length === 0 ? "No urges or choices logged yet." : "Nothing matches this filter."} />
       ) : (
-        <div className="flex flex-col gap-2 overflow-y-auto px-5 pb-4">
-          {all.map((e) => (
-            <EntryRow key={e.id} entry={e} onClick={() => onOpenEntry(e)} />
+        <div className="flex flex-col gap-5 overflow-y-auto px-5 pb-4">
+          {groups.map((group) => (
+            <div key={group.date.toDateString()}>
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-xs font-semibold" style={{ color: COLORS.ink }}>
+                  {group.date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+                </p>
+                <p className="text-[11px]" style={{ color: COLORS.inkFaint }}>
+                  {group.items.length} {group.items.length === 1 ? "entry" : "entries"}
+                </p>
+              </div>
+              <div className="flex flex-col gap-2">
+                {group.items.map((e) => (
+                  <EntryRow key={e.id} entry={e} onClick={() => onOpenEntry(e)} chevron />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -2978,6 +3160,7 @@ export default function NextChoiceApp() {
         urges={urges}
         choices={choices}
         onOpenEntry={openEntry}
+        onViewAllHistory={() => setTab("history")}
       />
     );
   } else if (tab === "history") {
@@ -2996,11 +3179,18 @@ export default function NextChoiceApp() {
       <style>{FONT_IMPORT}</style>
 
       {!chromeHidden && (
-        <div className="flex items-center justify-between px-5 pt-5">
-          <p style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 600 }} className="text-lg">
-            NextChoice
-          </p>
-          <div className="flex items-center gap-2">
+        <div className="flex items-start justify-between px-5 pt-5">
+          <div>
+            <p style={{ fontFamily: "'Newsreader', serif", color: COLORS.ink, fontWeight: 600 }} className="text-lg">
+              NextChoice
+            </p>
+            {tab === "home" && (
+              <p className="mt-0.5 text-xs" style={{ color: COLORS.inkFaint }}>
+                A calmer you, a brighter tomorrow.
+              </p>
+            )}
+          </div>
+          <div className="flex flex-shrink-0 items-center gap-2">
             <button
               onClick={() => setOverlay("manageActions")}
               className="flex h-9 w-9 items-center justify-center rounded-full"
